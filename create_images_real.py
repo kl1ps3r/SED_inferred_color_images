@@ -1,4 +1,5 @@
 import image_creator
+import generate_noise
 import argparse
 
 from lenstronomy.LensModel.lens_model import LensModel
@@ -43,14 +44,14 @@ def augment_light(model_params, augments, source=False):
     model_params_augmented['n_sersic'] = augments[1]
 
     if not source:
-        #model_params_augmented['q'] = augments[2]
+        model_params_augmented['q'] = augments[2]
 
-        #model_params_augmented['phi'] += augments[6]
+        model_params_augmented['phi'] += augments[6]
         model_params_augmented['center_x'] += augments[4]
         model_params_augmented['center_y'] += augments[5]
         return model_params_augmented, augments[3], augments[7]
     else:
-        #model_params_augmented['phi'] += augments[5]
+        model_params_augmented['phi'] += augments[5]
         model_params_augmented['center_x'] += augments[3]
         model_params_augmented['center_y'] += augments[4]
         return model_params_augmented, augments[2], augments[6]
@@ -113,6 +114,89 @@ def create_image_data(kwargs_model, kwargs_params, pixel_scale, num_pixels, exp_
 
     return kwargs_data
 
+def create_edge_galaxy_image_data(edge_light_kwargs_by_band, kwargs_model, cosmo, add_noise=False):
+    """
+    Generate image data for additional (unlensed) edge galaxies in native filter grids.
+
+    Parameters
+    ----------
+    edge_light_kwargs_by_band : dict
+        Mapping of band name to list of kwargs_lens_light entries (one per galaxy).
+        Example keys: 'VIS', 'NIR_Y', 'NIR_J', 'NIR_H'.
+    kwargs_model : dict
+        Lenstronomy model dictionary containing 'lens_model_list' and 'lens_light_model_list'.
+    cosmo : astropy.cosmology
+        Cosmology instance used for LensModel.
+    add_noise : bool
+        Whether to add poisson noise to the edge-galaxy-only images.
+
+    Returns
+    -------
+    dict
+        Mapping of band name to kwargs_data dict with image_data for that band.
+    """
+    band_meta = {
+        'VIS': image_creator.default_Euclid_VIS_image_meta,
+        'NIR_Y': image_creator.default_Euclid_NIR_Y_image_meta,
+        'NIR_J': image_creator.default_Euclid_NIR_J_image_meta,
+        'NIR_H': image_creator.default_Euclid_NIR_H_image_meta,
+    }
+
+    edge_images = {}
+
+    for band, edge_kwargs_lens_light in edge_light_kwargs_by_band.items():
+        if band not in band_meta:
+            raise ValueError(f"Unknown band '{band}'. Expected one of {list(band_meta.keys())}.")
+
+        meta = band_meta[band]
+        kwargs_data = {
+            'background_rms': meta['background_rms'],
+            'exposure_time': meta['exposure_time'],
+            'ra_at_xy_0': -meta['num_pix'] * meta['pixel_scale'] / 2,
+            'dec_at_xy_0': -meta['num_pix'] * meta['pixel_scale'] / 2,
+            'transform_pix2angle': np.array([[meta['pixel_scale'], 0], [0, meta['pixel_scale']]]),
+            'image_data': np.zeros((meta['num_pix'], meta['num_pix']))
+        }
+
+        kwargs_psf = {
+            'psf_type': 'GAUSSIAN',
+            'fwhm': meta['psf_fwhm'],
+            'pixel_size': meta['pixel_scale'],
+            'truncation': 12
+        }
+
+        kwargs_numerics = {'supersampling_factor': 4, 'supersampling_convolution': False}
+
+        data_class = ImageData(**kwargs_data)
+        psf_class = PSF(**kwargs_psf)
+
+        # Repeat the lens light model for each galaxy in this band
+        base_lens_light_model_list = kwargs_model['lens_light_model_list']
+        if len(base_lens_light_model_list) != 1:
+            raise ValueError("Expected a single lens_light_model_list entry to repeat for edge galaxies.")
+        lens_light_model_list = base_lens_light_model_list * len(edge_kwargs_lens_light)
+        lens_light_model_class = LightModel(lens_light_model_list)
+
+        lens_model_class = LensModel(kwargs_model['lens_model_list'], lens_redshift_list=[0.0 for _ in kwargs_model['lens_model_list']], cosmo=cosmo)
+
+        image_model = ImageModel(
+            data_class,
+            psf_class,
+            lens_light_model_class=lens_light_model_class,
+            lens_model_class=lens_model_class,
+            kwargs_numerics=kwargs_numerics
+        )
+
+        image_edge = image_model.image(kwargs_lens=None, kwargs_lens_light=edge_kwargs_lens_light)
+
+        if add_noise:
+            image_edge = image_edge + image_util.add_poisson(image_edge, exp_time=meta['exposure_time'])
+
+        kwargs_data['image_data'] = image_edge
+        edge_images[band] = kwargs_data
+
+    return edge_images
+
 if __name__ == "__main__":
     zeropoints = np.array([25.74, 29.8, 30.0, 29.9])
 
@@ -127,17 +211,17 @@ if __name__ == "__main__":
                         help='Path to the output directory where results will be saved.')
     parser.add_argument('--verbose', action='store_true',
                         help='Enable verbose output.')
-    args = parser.parse_args('--base_class 4 --input_path ~/Documents/creating_spiral_images/input --output_path test_full'.split())
+    args = parser.parse_args('--base_class 4 --input_path . --output_path test_noise'.split())
 
     # Set up error logging
     error_log_path = f"{args.output_path}/error_log.txt"
     
-    with open('/Users/admin/Documents/creating_spiral_images/opt_4/kwargs.pkl', 'rb') as f:
+    with open(f"{args.input_path}/base_class/main_{args.base_class}/kwargs.pkl", 'rb') as f:
         data = pkl.load(f)
         kwargs_params, kwargs_models, multiband_list = data['params'], data['models'], data['multiband_list']
 
-    deflector_file = './test_params_deflector.csv'
-    source_file = './test_params_source.csv'
+    deflector_file = f"{args.input_path}/test_params_deflector.csv"
+    source_file = f"{args.input_path}/test_params_source.csv"
 
     deflector_augments = pd.read_csv(deflector_file)
     source_augments = pd.read_csv(source_file)
@@ -240,8 +324,6 @@ if __name__ == "__main__":
             NIR_J_kwargs_params['kwargs_lens_light'][0]['amp'], NIR_J_kwargs_params['kwargs_source'][0]['amp'] = amplitudes[:, 2]
             NIR_H_kwargs_params['kwargs_lens_light'][0]['amp'], NIR_H_kwargs_params['kwargs_source'][0]['amp'] = amplitudes[:, 3]
 
-
-            # ~~~~~~~~~~~~~~~~ Temp testing ~~~~~~~~~~~~~~~~~~~~~~
             test_fluxes = np.zeros_like(amplitudes)
             test_ab_mags = np.zeros_like(amplitudes)
             for i, target in enumerate(['lens', 'source']):
@@ -272,8 +354,6 @@ if __name__ == "__main__":
                 print('Post-rescale AB mags:\n', test_ab_mags)
                 print('Post-rescale AB mag diffs:\n', test_ab_mag_diffs)
                 print('Expected (target) AB mag diffs:\n', ab_mags_diffs)
-
-            # ~~~~~~~~~~~~~~~~ End Temp testing ~~~~~~~~~~~~~~~~~~~~~~
 
 
             VIS_kwargs_data = create_image_data(kwargs_models, VIS_kwargs_params, image_creator.default_Euclid_VIS_image_meta['pixel_scale'], image_creator.default_Euclid_VIS_image_meta['num_pix'], 
@@ -413,6 +493,19 @@ if __name__ == "__main__":
             NIR_Y_reprojected, _ = reproject_interp((NIR_Y_kwargs_data['image_data'], NIR_WCS), VIS_WCS, shape_out=VIS_kwargs_data['image_data'].shape, order='bilinear')
             NIR_J_reprojected, _ = reproject_interp((NIR_J_kwargs_data['image_data'], NIR_WCS), VIS_WCS, shape_out=VIS_kwargs_data['image_data'].shape, order='bilinear')
             NIR_H_reprojected, _ = reproject_interp((NIR_H_kwargs_data['image_data'], NIR_WCS), VIS_WCS, shape_out=VIS_kwargs_data['image_data'].shape, order='bilinear')
+
+            # replace any NaN values that may have been introduced during reprojection with zeros
+            NIR_Y_reprojected = np.nan_to_num(NIR_Y_reprojected)
+            NIR_J_reprojected = np.nan_to_num(NIR_J_reprojected)
+            NIR_H_reprojected = np.nan_to_num(NIR_H_reprojected)
+
+            # generate noise for all bands
+            noise_list = generate_noise.generate_noise_image((15, 15))
+
+            VIS_kwargs_data['image_data'] += noise_list[0]
+            NIR_Y_reprojected += noise_list[1]
+            NIR_J_reprojected += noise_list[2]
+            NIR_H_reprojected += noise_list[3]
 
             # save images and headers
             data_list = [VIS_kwargs_data['image_data'], NIR_Y_reprojected, NIR_J_reprojected, NIR_H_reprojected]
