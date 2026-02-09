@@ -334,7 +334,7 @@ if __name__ == "__main__":
 
     output = generate_galaxy_parameters(args.num_galaxies, source=True, deflector=True)
     save_to_csv(output, args.output, verbose=False)
-    exit(0)
+
     '''colours={'source':'blue', 'deflector':'red'}
     fig, axes = plt.subplots(2, 4, figsize=(20, 8))
     for i, (galaxy_type, params) in enumerate(output.items()):
