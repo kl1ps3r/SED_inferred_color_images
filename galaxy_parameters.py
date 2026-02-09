@@ -174,8 +174,19 @@ def generate_galaxy_parameters(num_galaxies, source=True, deflector=True, rng=np
                     combined_parameters[param] = []
                 combined_parameters[param].append(parameters[param][bin_index].pop(0))
 
+        # Validate and fix physical parameters from bin-based sampling
         for param, values in combined_parameters.items():
-                combined_parameters[param] = np.array(values)
+            combined_parameters[param] = np.array(values)
+            
+            # Ensure physical parameters are positive
+            if param in ['effective_radius', 'sersic_index']:
+                combined_parameters[param] = np.abs(combined_parameters[param])
+                # Clamp sersic_index to reasonable range
+                if param == 'sersic_index':
+                    combined_parameters[param] = np.clip(combined_parameters[param], 0.3, 8.0)
+                # Ensure effective_radius has a minimum value
+                if param == 'effective_radius':
+                    combined_parameters[param] = np.maximum(combined_parameters[param], 0.1)
 
         for param in same:
             if param == 'redshift':
@@ -257,8 +268,22 @@ def generate_galaxy_parameters(num_galaxies, source=True, deflector=True, rng=np
                     combined_parameters[param] = []
                 combined_parameters[param].append(parameters[param][bin_index].pop(0))
 
+        # Validate and fix physical parameters from bin-based sampling
         for param, values in combined_parameters.items():
-                combined_parameters[param] = np.array(values)
+            combined_parameters[param] = np.array(values)
+            
+            # Ensure physical parameters are positive
+            if param in ['effective_radius', 'sersic_index', 'axis_ratio']:
+                combined_parameters[param] = np.abs(combined_parameters[param])
+                # Clamp axis_ratio to valid range [0, 1]
+                if param == 'axis_ratio':
+                    combined_parameters[param] = np.clip(combined_parameters[param], 0.1, 1.0)
+                # Clamp sersic_index to reasonable range
+                if param == 'sersic_index':
+                    combined_parameters[param] = np.clip(combined_parameters[param], 0.3, 8.0)
+                # Ensure effective_radius has a minimum value
+                if param == 'effective_radius':
+                    combined_parameters[param] = np.maximum(combined_parameters[param], 0.1)
         
         for param in same:
             if param == 'redshift':

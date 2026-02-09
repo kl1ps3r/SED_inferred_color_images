@@ -49,14 +49,44 @@ def augment_light(model_params, augments, source=False):
         model_params_augmented['q'] = augments[2]
 
         model_params_augmented['phi'] += augments[6]
-        model_params_augmented['center_x'] += augments[4]
-        model_params_augmented['center_y'] += augments[5]
+        #model_params_augmented['center_x'] += augments[4]
+        #model_params_augmented['center_y'] += augments[5]
         return model_params_augmented, augments[3], augments[7]
     else:
         model_params_augmented['phi'] += augments[5]
         model_params_augmented['center_x'] += augments[3]
         model_params_augmented['center_y'] += augments[4]
         return model_params_augmented, augments[2], augments[6]
+
+def augment_lens_main(model_params, augments):
+    model_params_augmented = model_params.copy()
+
+    #model_params_augmented['center_x'] += augments[3]
+    #model_params_augmented['center_y'] += augments[4]
+    _, phi = e_to_q_phi(model_params_augmented['e1'], model_params_augmented['e2'])
+    e1, e2 = q_phi_to_e(augments[2], phi + augments[6])
+    model_params_augmented['e1'] = e1
+    model_params_augmented['e2'] = e2
+    return model_params_augmented
+
+def augment_lens_point(model_params, augments):
+    model_params_augmented = model_params.copy()
+
+    #model_params_augmented['center_x'] += augments[3]
+    #model_params_augmented['center_y'] += augments[4]
+    return model_params_augmented
+
+def q_phi_to_e(q, phi):
+    e = (1 - q) / (1 + q)
+    e1 = e * np.cos(2 * phi)
+    e2 = e * np.sin(2 * phi)
+    return e1, e2
+
+def e_to_q_phi(e1, e2):
+    e = np.sqrt(e1**2 + e2**2)
+    q = (1 - e) / (1 + e)
+    phi = 0.5 * np.arctan2(e2, e1)
+    return q, phi
 
 def create_image_data(kwargs_model, kwargs_params, pixel_scale, num_pixels, exp_time, bkg_rms, psf_fwhm, 
                       lens_redshifts, source_redshifts, cosmo, add_noise=True):
@@ -389,6 +419,9 @@ if __name__ == "__main__":
                 # Augment lens and source light model parameters
                 kwargs_params['kwargs_lens_light'][0], vis_ab_mag_deflector, redshift_deflector = augment_light(kwargs_params['kwargs_lens_light'][0], deflector_row)
                 kwargs_params['kwargs_source'][0], vis_ab_mag_source, redshift_source = augment_light(kwargs_params['kwargs_source'][0], source_row, source=True)
+
+                kwargs_params['kwargs_lens'][0] = augment_lens_main(kwargs_params['kwargs_lens'][0], deflector_row)
+                kwargs_params['kwargs_lens'][1] = augment_lens_point(kwargs_params['kwargs_lens'][1], deflector_row)
 
                 redshift_dict = {'lens': redshift_deflector, 'source': redshift_source}
 
