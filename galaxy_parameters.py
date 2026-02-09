@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import glob
+from argparse import ArgumentParser
 
 distributions = {
     'source': {
@@ -283,7 +284,7 @@ def physical_to_angular_size(effective_radius_kpc, redshift, cosmo):
 
     return angular_size_arcsec
 
-def save_to_csv(galaxy_parameters, filename_prefix):
+def save_to_csv(galaxy_parameters, filename_prefix, **kwargs):
     """
     Save galaxy parameters to CSV files.
 
@@ -291,7 +292,7 @@ def save_to_csv(galaxy_parameters, filename_prefix):
     galaxy_parameters (dict): A dictionary containing galaxy parameters.
     filename_prefix (str): The prefix for the output CSV files.
     """
-
+    verbose = kwargs.get('verbose', False)
     os.makedirs(os.path.dirname(filename_prefix), exist_ok=True)
 
     for galaxy_type, params in galaxy_parameters.items():
@@ -299,10 +300,11 @@ def save_to_csv(galaxy_parameters, filename_prefix):
         header = ','.join(params.keys())
         data = np.column_stack([params[key] for key in params.keys()])
         np.savetxt(filename, data, delimiter=',', header=header, comments='')
-        print(f"Saved {galaxy_type} parameters to {filename}")
+        if verbose:
+            print(f"Saved {galaxy_type} parameters to {filename}")
 
 if __name__ == "__main__":
-    from matplotlib import pyplot as plt
+    '''from matplotlib import pyplot as plt
     plt.rcParams['figure.facecolor'] = 'white'
     plt.rcParams.update({'figure.autolayout': True})
 
@@ -322,13 +324,18 @@ if __name__ == "__main__":
     plt.rc('xtick.minor',size=5,pad=4)
 
     plt.rc('ytick.major',size=10)
-    plt.rc('ytick.minor',size=5)
+    plt.rc('ytick.minor',size=5)'''
 
-    output = generate_galaxy_parameters(10, source=True, deflector=True, verbose=False)
+    parser = ArgumentParser()
+    parser.add_argument('num_galaxies', type=int, default=1000, help='Number of galaxies to generate parameters for.')
+    parser.add_argument('-o', '--output', type=str, help='Output filename prefix', default='./galaxy_parameters/galaxy_parameters')
+    args = parser.parse_args()
 
-    save_to_csv(output, "./large_test_in/galaxy_parameters_lt_1")
+
+    output = generate_galaxy_parameters(args.num_galaxies, source=True, deflector=True)
+    save_to_csv(output, args.output, verbose=False)
     exit(0)
-    colours={'source':'blue', 'deflector':'red'}
+    '''colours={'source':'blue', 'deflector':'red'}
     fig, axes = plt.subplots(2, 4, figsize=(20, 8))
     for i, (galaxy_type, params) in enumerate(output.items()):
         for ax, name in zip(axes.flatten(), sorted(params.keys())):
@@ -381,4 +388,4 @@ if __name__ == "__main__":
     filename = f'./plots/galaxy_parameters_v{previous_version + 1}.png'
     plt.tight_layout()
     plt.savefig(filename)
-    plt.show()
+    plt.show()'''
