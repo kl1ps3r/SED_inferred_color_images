@@ -87,15 +87,12 @@ class SED_color_calculator:
             raise NotImplementedError("Only 'Euclid' filter image meta dicts is currently implemented.")
 
     def get_amplitudes(self, target_AB_mags, kwargs_model, kwarg_params, redshifts:dict, **kwargs):
-        if kwargs.get('verbose', False):
-            print(kwarg_params)
-            verbose = True
-        else:
-            verbose = False
 
         # handle kwargs
         verbose = kwargs.get('verbose', False)
-        
+        single_gen = kwargs.get('single_gen', False)
+
+
         # redshift SEDs
         shifted_SEDs = {}
         for model_type in self.SEDs.keys():
@@ -165,17 +162,18 @@ class SED_color_calculator:
         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         '''
         # check flux ratio versus target flux ratio
-        vis_amplitudes = {model_type: amplitudes[model_type][0] for model_type in amplitudes.keys()}
-        if verbose:
-            print(f"VIS amplitudes: {vis_amplitudes}")
-        computed_flux_ratio = self.compute_flux_ratio(kwargs_model,
-                                                       kwarg_params,
-                                                       filter_name='VIS',
-                                                       amplitudes=vis_amplitudes)
-        if verbose:
-            print(f"Computed flux ratio: {computed_flux_ratio}, Target flux ratio: {target_flux_ratio}")
+        if not single_gen:
+            vis_amplitudes = {model_type: amplitudes[model_type][0] for model_type in amplitudes.keys()}
+            if verbose:
+                print(f"VIS amplitudes: {vis_amplitudes}")
+            computed_flux_ratio = self.compute_flux_ratio(kwargs_model,
+                                                        kwarg_params,
+                                                        filter_name='VIS',
+                                                        amplitudes=vis_amplitudes)
+            if verbose:
+                print(f"Computed flux ratio: {computed_flux_ratio}, Target flux ratio: {target_flux_ratio}")
 
-        assert np.isclose(computed_flux_ratio, target_flux_ratio, rtol=1e-2), "Computed flux ratio does not match target flux ratio within tolerance."
+            assert np.isclose(computed_flux_ratio, target_flux_ratio, rtol=1e-2), "Computed flux ratio does not match target flux ratio within tolerance."
 
         return amplitudes
 
@@ -416,7 +414,8 @@ class SED_color_calculator:
                         lens_image=True,
                         convergence_factor=1e-5,
                         num_pix_step=10,
-                        meta=None):
+                        meta=None,
+                        **kwargs):
         if cosmology is None:
             from astropy.cosmology import FlatLambdaCDM
             Om = 0.3
@@ -443,12 +442,12 @@ class SED_color_calculator:
 
         # compute fluxes for increaseing num_pixes
         flux_diff = np.inf
-        total_flux = 0.0
+        total_flux = -np.inf
         num_pix = 100
         
         iteration = 0
 
-        while np.abs(flux_diff) > convergence_factor * total_flux:
+        while np.abs(flux_diff) > convergence_factor * total_flux or iteration == 0:
             previous_flux = total_flux
             _kwargs_data['image_data'] = np.zeros((num_pix, num_pix))
 
@@ -461,7 +460,7 @@ class SED_color_calculator:
 
             elif 'lens' in to_compute:
                 image_model = ImageModel(data_class, psf_model_class, lens_light_model_class=light_models['lens'], lens_model_class=lens_model_class, kwargs_numerics=kwargs_numerics)
-                img = image_model.image(kwargs_lens=kwargs_params['kwargs_lens'], kwargs_lens_light=kwargs_params['kwargs_lens_light'])
+                img = image_model.image(kwargs_lens=None, kwargs_lens_light=kwargs_params['kwargs_lens_light'])
 
             elif 'source' in to_compute:
                 image_model = ImageModel(data_class, psf_model_class, source_model_class=light_models['source'], kwargs_numerics=kwargs_numerics)
@@ -484,6 +483,7 @@ class SED_color_calculator:
 
         if verbose:
             print(f"Converged after {iteration} iterations with num_pix = {num_pix}.")
+            print(f"Final total flux: {total_flux}, flux difference: {flux_diff}")
         return total_flux * kwargs_data['transform_pix2angle'][0,0]**2  # scale by pixel area
 
     @staticmethod

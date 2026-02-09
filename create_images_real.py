@@ -27,6 +27,7 @@ from matplotlib import pyplot as plt
 import copy
 import traceback
 from datetime import datetime
+from tqdm import tqdm
 
 def load_data(filepath):
     with open(filepath, 'rb') as f:
@@ -114,6 +115,115 @@ def create_image_data(kwargs_model, kwargs_params, pixel_scale, num_pixels, exp_
 
     return kwargs_data
 
+def _edge_params_from_row(row, cosmo):
+
+    params = {}
+
+    if hasattr(row, 'redshift'):
+        if cosmo is None:
+            raise ValueError("cosmo must be provided when edge galaxy rows include redshift")
+        angular_diameter_distance = cosmo.angular_diameter_distance(row.redshift)
+        params['R_sersic'] = ((row.effective_radius_kpc / angular_diameter_distance.to(u.kpc).value) * u.radian).to(u.arcsec).value
+    else:
+        params['R_sersic'] = row.effective_radius_kpc
+
+    params['n_sersic'] = row.sersic_index
+    params['q'] = row.axis_ratio
+    params['phi'] = row.angle
+    params['center_x'] = row.pos_x
+    params['center_y'] = row.pos_y
+    params['amp'] = 1.0
+
+    return params
+
+def load_edge_galaxies_by_image(edge_galaxy_csv_path):
+    edge_df = pd.read_csv(edge_galaxy_csv_path)
+    if 'image_num' not in edge_df.columns:
+        raise ValueError("edge galaxy CSV must include an 'image_num' column")
+    return edge_df
+
+def build_edge_galaxy_kwargs_by_band(edge_rows, kwargs_models, color_maker, cosmo, **kwargs):
+    bands = ['VIS', 'NIR_Y', 'NIR_J', 'NIR_H']
+    band_meta = {
+        'VIS': image_creator.default_Euclid_VIS_image_meta,
+        'NIR_Y': image_creator.default_Euclid_NIR_Y_image_meta,
+        'NIR_J': image_creator.default_Euclid_NIR_J_image_meta,
+        'NIR_H': image_creator.default_Euclid_NIR_H_image_meta,
+    }
+
+    edge_kwargs_by_band = {band: [] for band in bands}
+
+    for row in edge_rows.itertuples(index=False):
+
+        edge_params = _edge_params_from_row(row, cosmo)
+        target_ab_mag = row.AB_magnitude
+
+        amplitudes = np.ones(len(bands))
+        fluxes = np.zeros(len(bands))
+
+        for band_index, band in enumerate(bands):
+            meta = band_meta[band]
+            edge_params_band = {'kwargs_lens_light': [edge_params.copy()]}
+            edge_params_band['kwargs_lens_light'][0]['amp'] = amplitudes[band_index]
+            edge_params_band['kwargs_lens_light'][0]['center_x'] = 0.0
+            edge_params_band['kwargs_lens_light'][0]['center_y'] = 0.0
+
+            fluxes[band_index] = color_maker.compute_flux(
+                kwargs_params=edge_params_band,
+                kwargs_model=kwargs_models,
+                meta=meta,
+                z_lens=row.redshift,
+                z_source=row.redshift,
+                to_compute=['lens'],
+                convergence_factor=1e-3,
+            )
+
+        # Calculate magnitude differences from unit amplitudes
+        actual_mags = -2.5 * np.log10(fluxes)
+
+        # Get SED-based colors (relative magnitudes across bands)
+        redshift_SED = color_maker.redshift(color_maker.SEDs['lens'], row.redshift)
+
+        # SED-predicted AB mags for this galaxy (arbitrary normalization)
+        sed_ab_mags = np.array([
+            color_maker.get_ab_magnitude(
+                SED=redshift_SED,
+                filter_throughput=color_maker.filter_throughputs[band_index]
+            )
+            for band_index in range(len(bands))
+        ])
+        
+        # Get color differences from SED (these are physical colors)
+        sed_color_diffs = sed_ab_mags - sed_ab_mags[0]
+        
+        # Get color differences from actual fluxes with unit amplitude
+        actual_color_diffs = actual_mags - actual_mags[0]
+
+        if args.verbose:
+            print(f"Edge galaxy target_ab_mag (VIS): {target_ab_mag}")
+            print(f"Edge galaxy SED color diffs: {sed_color_diffs}")
+            print(f"Edge galaxy actual color diffs (unit amp): {actual_color_diffs}")
+            print(f"DEBUG_EDGE_GALAXY: target_ab_mag={target_ab_mag}")
+            print(f"DEBUG_EDGE_GALAXY: actual_mags(unit amp)={actual_mags}")
+            print(f"DEBUG_EDGE_GALAXY: sed_color_diffs={sed_color_diffs}")
+            print(f"DEBUG_EDGE_GALAXY: actual_color_diffs={actual_color_diffs}")
+
+        # Scale amplitudes to match SED colors (this gives correct relative fluxes)
+        color_scale_factors = 10 ** (-0.4 * (sed_color_diffs - actual_color_diffs))
+        amplitudes *= color_scale_factors
+        
+        # Note: These amplitudes have correct colors but arbitrary absolute normalization
+        # The absolute flux calibration (to match target_ab_mag) happens later via per-band
+        # scaling using the zeropoint formula: sum(pixels) = 10^(0.4*(ZP - m_AB))
+        if args.verbose:
+            print(f"DEBUG_EDGE_GALAXY: amplitudes(after scaling)={amplitudes}")
+        for band_index, band in enumerate(bands):
+            edge_params_band = edge_params.copy()
+            edge_params_band['amp'] = amplitudes[band_index]
+            edge_kwargs_by_band[band].append(edge_params_band)
+
+    return edge_kwargs_by_band
+
 def create_edge_galaxy_image_data(edge_light_kwargs_by_band, kwargs_model, cosmo, add_noise=False):
     """
     Generate image data for additional (unlensed) edge galaxies in native filter grids.
@@ -144,7 +254,7 @@ def create_edge_galaxy_image_data(edge_light_kwargs_by_band, kwargs_model, cosmo
 
     edge_images = {}
 
-    for band, edge_kwargs_lens_light in edge_light_kwargs_by_band.items():
+    for band_index, (band, edge_kwargs_lens_light) in enumerate(edge_light_kwargs_by_band.items()):
         if band not in band_meta:
             raise ValueError(f"Unknown band '{band}'. Expected one of {list(band_meta.keys())}.")
 
@@ -207,50 +317,63 @@ if __name__ == "__main__":
                         help='Base class for the spiral galaxy (1, 2, 3, or 4).')
     parser.add_argument('--input_path', type=str, required=True,
                         help='Path to the input directory containing input files.')
-    parser.add_argument('--output_path', type=str, required=True,
+    parser.add_argument('-o', '--output_path', type=str, required=True,
                         help='Path to the output directory where results will be saved.')
+    parser.add_argument('--edge_galaxy', type=str, default=None,
+                        help='CSV file containing edge galaxy parameters (optional).')
+    parser.add_argument('--deflector_params', type=str, default='deflector.csv', help='deflector parameter CSV files (optional).')
+    parser.add_argument('--source_params', type=str, default='source.csv', help='source parameter CSV files (optional).')
     parser.add_argument('--verbose', action='store_true',
                         help='Enable verbose output.')
-    args = parser.parse_args('--base_class 4 --input_path . --output_path test_noise'.split())
+    args = parser.parse_args()
 
     # Set up error logging
     error_log_path = f"{args.output_path}/error_log.txt"
+    # Clear existing error log
+    with open(error_log_path, 'w') as f:
+        f.write(f"Error log for create_images_real.py - {datetime.now()}\n\n")
+
+    # set SED paths
+            
+    SED_paths = {'source': f'{args.input_path}/sed_observed_star_forming.csv', 'lens': f'{args.input_path}/Ell13_template_norm.csv'}
     
     with open(f"{args.input_path}/base_class/main_{args.base_class}/kwargs.pkl", 'rb') as f:
         data = pkl.load(f)
         kwargs_params, kwargs_models, multiband_list = data['params'], data['models'], data['multiband_list']
 
-    deflector_file = f"{args.input_path}/test_params_deflector.csv"
-    source_file = f"{args.input_path}/test_params_source.csv"
+    deflector_file = f"{args.input_path}/{args.deflector_params}"
+    source_file = f"{args.input_path}/{args.source_params}"
 
     deflector_augments = pd.read_csv(deflector_file)
     source_augments = pd.read_csv(source_file)
+
+    edge_galaxy_df = None
+    if args.edge_galaxy:
+        edge_galaxy_df = load_edge_galaxies_by_image(args.input_path + '/' + args.edge_galaxy)
     
     successful_count = 0
     failed_count = 0
-    
-    for i, (deflector_row, source_row) in enumerate(zip(deflector_augments.itertuples(index=False), source_augments.itertuples(index=False))):
+
+    for j, (deflector_row, source_row) in enumerate(tqdm(zip(deflector_augments.itertuples(index=False), source_augments.itertuples(index=False)), total=len(deflector_augments))):
+        
         try:
             if args.verbose:
                 print(f"\n{'='*60}")
-                print(f"Processing row {i}...")
+                print(f"Processing row {j}...")
                 print(f"{'='*60}")
 
             # Augment lens and source light model parameters
-            kwargs_params['kwargs_lens_light'][0], ab_mag_deflector, redshift_deflector = augment_light(kwargs_params['kwargs_lens_light'][0], deflector_row)
-            kwargs_params['kwargs_source'][0], ab_mag_source, redshift_source = augment_light(kwargs_params['kwargs_source'][0], source_row, source=True)
+            kwargs_params['kwargs_lens_light'][0], vis_ab_mag_deflector, redshift_deflector = augment_light(kwargs_params['kwargs_lens_light'][0], deflector_row)
+            kwargs_params['kwargs_source'][0], vis_ab_mag_source, redshift_source = augment_light(kwargs_params['kwargs_source'][0], source_row, source=True)
 
             redshift_dict = {'lens': redshift_deflector, 'source': redshift_source}
 
-            # load set SED paths
-            SED_directory = '/Users/admin/Documents/euclid_color_profiles/swire_library_as_csv/'
-
-            SED_paths = {'source': '/Users/admin/Documents/creating_SED_from_stellar_pop/sed_observed_test.csv', 'lens': SED_directory + 'SA_template_norm.csv'}
-
             # calculate amplitudes for each filter
             color_maker = image_creator.SED_color_calculator(SED_paths, cosmology=cosmo, target_mags=redshift_dict)
+            redshifted_SEDs = {'lens': color_maker.redshift(color_maker.SEDs['lens'], redshift_deflector),
+                                'source': color_maker.redshift(color_maker.SEDs['source'], redshift_source)}
 
-            amps = color_maker.get_amplitudes({'lens': ab_mag_deflector, 'source': ab_mag_source}, kwargs_models, kwargs_params, redshift_dict)
+            amps = color_maker.get_amplitudes({'lens': vis_ab_mag_deflector, 'source': vis_ab_mag_source}, kwargs_models, kwargs_params, redshift_dict)
             amplitudes = np.array((amps['lens'], amps['source']))
             scaling = amplitudes[0, 0]
             #print(scaling)
@@ -271,9 +394,9 @@ if __name__ == "__main__":
             fluxes = np.zeros_like(amplitudes)
 
             # get the target ab magnitudes
-            for i, target in enumerate(['lens', 'source']):
+            for i, target in (enumerate(['lens', 'source'])):
                 for band_index in range(amplitudes.shape[1]):
-                    ab_mags[i, band_index] = color_maker.get_ab_magnitude(SED=color_maker.SEDs[target], filter_throughput=color_maker.filter_throughputs[band_index])
+                    ab_mags[i, band_index] = color_maker.get_ab_magnitude(SED=redshifted_SEDs[target], filter_throughput=color_maker.filter_throughputs[band_index])
 
                     match band_index:
                         case 0:
@@ -294,8 +417,8 @@ if __name__ == "__main__":
                                                                     z_lens=redshift_dict[target], to_compute=[target], convergence_factor=1e-2)
 
 
-            ab_mags[0, :] += -ab_mags[0, 0] + ab_mag_deflector  # normalize to vis lens ab mag target
-            ab_mags[1, :] += -ab_mags[1, 0] + ab_mag_source  # normalize to vis source ab mag 
+            ab_mags[0, :] += -ab_mags[0, 0] + vis_ab_mag_deflector  # normalize to vis lens ab mag target
+            ab_mags[1, :] += -ab_mags[1, 0] + vis_ab_mag_source  # normalize to vis source ab mag 
             
             
             if False:
@@ -324,38 +447,6 @@ if __name__ == "__main__":
             NIR_J_kwargs_params['kwargs_lens_light'][0]['amp'], NIR_J_kwargs_params['kwargs_source'][0]['amp'] = amplitudes[:, 2]
             NIR_H_kwargs_params['kwargs_lens_light'][0]['amp'], NIR_H_kwargs_params['kwargs_source'][0]['amp'] = amplitudes[:, 3]
 
-            test_fluxes = np.zeros_like(amplitudes)
-            test_ab_mags = np.zeros_like(amplitudes)
-            for i, target in enumerate(['lens', 'source']):
-                for band_index in range(amplitudes.shape[1]):
-                    match band_index:
-                        case 0:
-                            _kwargs_params = VIS_kwargs_params
-                            meta=image_creator.default_Euclid_VIS_image_meta
-                        case 1:
-                            _kwargs_params = NIR_Y_kwargs_params
-                            meta=image_creator.default_Euclid_NIR_Y_image_meta
-                        case 2:
-                            _kwargs_params = NIR_J_kwargs_params
-                            meta=image_creator.default_Euclid_NIR_J_image_meta
-                        case 3:
-                            _kwargs_params = NIR_H_kwargs_params
-                            meta=image_creator.default_Euclid_NIR_H_image_meta
-                    '''print(f'Computing flux for {target} in band {band_index}')
-                    print(_kwargs_params['kwargs_lens_light'][0]['amp'], _kwargs_params['kwargs_source'][0]['amp'])'''
-                    test_fluxes[i, band_index] = color_maker.compute_flux(kwargs_params=_kwargs_params, kwargs_model=kwargs_models, meta=meta, z_source=redshift_dict[target], 
-                                                                                    z_lens=redshift_dict[target], to_compute=[target], convergence_factor=1e-2)
-            
-            test_ab_mags = -2.5 * np.log10(test_fluxes)
-            test_ab_mag_diffs = np.array([test_ab_mags[0] - test_ab_mags[0,0], test_ab_mags[1] - test_ab_mags[1,0]])
-            
-            if args.verbose:
-                print('Post-rescale fluxes:\n', test_fluxes)
-                print('Post-rescale AB mags:\n', test_ab_mags)
-                print('Post-rescale AB mag diffs:\n', test_ab_mag_diffs)
-                print('Expected (target) AB mag diffs:\n', ab_mags_diffs)
-
-
             VIS_kwargs_data = create_image_data(kwargs_models, VIS_kwargs_params, image_creator.default_Euclid_VIS_image_meta['pixel_scale'], image_creator.default_Euclid_VIS_image_meta['num_pix'], 
                                                 image_creator.default_Euclid_VIS_image_meta['exposure_time'], image_creator.default_Euclid_VIS_image_meta['background_rms'], 
                                                 image_creator.default_Euclid_VIS_image_meta['psf_fwhm'], [redshift_deflector], [redshift_source], cosmo)
@@ -368,20 +459,8 @@ if __name__ == "__main__":
             NIR_H_kwargs_data = create_image_data(kwargs_models, NIR_H_kwargs_params, image_creator.default_Euclid_NIR_H_image_meta['pixel_scale'], image_creator.default_Euclid_NIR_H_image_meta['num_pix'], 
                                                 image_creator.default_Euclid_NIR_H_image_meta['exposure_time'], image_creator.default_Euclid_NIR_H_image_meta['background_rms'], 
                                                 image_creator.default_Euclid_NIR_H_image_meta['psf_fwhm'], [redshift_deflector], [redshift_source], cosmo)
-            
-            # After amplitude rescaling, colors are correct but absolute normalization may be off
-            # Compute total target magnitude (lens + source combined) for VIS filter as reference
-            total_target_mag_VIS = -2.5 * np.log10(10**(-0.4 * ab_mags[0, 0]) + 10**(-0.4 * ab_mags[1, 0]))
-            total_actual_mag_VIS = -2.5 * np.log10(test_fluxes[0, 0] + test_fluxes[1, 0])
-            
-            # Single global scaling factor to fix absolute normalization (same for all filters)
-            global_mag_offset = total_target_mag_VIS - total_actual_mag_VIS
-            
-            if args.verbose:
-                print('Total target VIS mag (lens+source):', total_target_mag_VIS)
-                print('Total actual VIS mag (post-rescale):', total_actual_mag_VIS)
-                print('Global magnitude offset to apply:', global_mag_offset)
-                print('Global flux scale factor:', 10 ** (-0.4 * global_mag_offset))
+
+        
             
             # Direct approach: compute target pixel values from Euclid formula
             # m_AB = -2.5*log10(sum(pixel_values)) + ZP
@@ -401,8 +480,11 @@ if __name__ == "__main__":
             
             # Scale each filter to achieve target pixel sum
             scale_factors = target_pixel_sums / actual_sums
+
             
             if args.verbose:
+
+                print(f"Scale factors to apply to each filter: {-2.5 * np.log10(scale_factors)}")
                 print('Target total mags:', total_target_mags)
                 print('Target pixel sums:', target_pixel_sums)
                 print('Actual sums (lenstronomy units):', actual_sums)
@@ -412,49 +494,104 @@ if __name__ == "__main__":
             NIR_Y_kwargs_data['image_data'] *= scale_factors[1]
             NIR_J_kwargs_data['image_data'] *= scale_factors[2]
             NIR_H_kwargs_data['image_data'] *= scale_factors[3]
+
+            if edge_galaxy_df is not None:
+                
+                edge_rows = edge_galaxy_df[edge_galaxy_df['image_num'] == j]
+
+                # DEBUG_EDGE_GALAXY: row selection summary
+                if args.verbose:
+                    print(f"DEBUG_EDGE_GALAXY: image_num={j}, edge_rows={len(edge_rows)}")
+                if len(edge_rows) > 0:
+                    if args.verbose:
+                        print("DEBUG_EDGE_GALAXY: sample rows:\n", edge_rows.head(3))
+                        # DEBUG_EDGE_GALAXY: VIS half-size check
+                        vis_half_size = image_creator.default_Euclid_VIS_image_meta['num_pix'] * image_creator.default_Euclid_VIS_image_meta['pixel_scale'] / 2
+                        print(f"DEBUG_EDGE_GALAXY: VIS half-size (arcsec)={vis_half_size}")
+                        print("DEBUG_EDGE_GALAXY: max |pos_x|=", edge_rows['pos_x'].abs().max(),
+                            "max |pos_y|=", edge_rows['pos_y'].abs().max())
+
+                if args.verbose:
+                    print(edge_rows.shape)
+
+                if len(edge_rows) > 0:
+                    # DEBUG_EDGE_GALAXY: scale factors applied to main images
+                    if args.verbose:
+                        print(f"DEBUG_EDGE_GALAXY: scale_factors={scale_factors}")
+                    edge_kwargs_by_band = build_edge_galaxy_kwargs_by_band(
+                        edge_rows,
+                        kwargs_models,
+                        color_maker,
+                        cosmo
+                    )
+
+                    edge_images = create_edge_galaxy_image_data(edge_kwargs_by_band, kwargs_models, cosmo, add_noise=False)
+                    # DEBUG_EDGE_GALAXY: edge image stats before adding
+                    if args.verbose:
+                        if 'VIS' in edge_images:
+                            print("DEBUG_EDGE_GALAXY: edge VIS sum/max:", np.sum(edge_images['VIS']['image_data']), np.max(edge_images['VIS']['image_data']))
+                        if 'NIR_Y' in edge_images:
+                            print("DEBUG_EDGE_GALAXY: edge NIR_Y sum/max:", np.sum(edge_images['NIR_Y']['image_data']), np.max(edge_images['NIR_Y']['image_data']))
+                        if 'NIR_J' in edge_images:
+                            print("DEBUG_EDGE_GALAXY: edge NIR_J sum/max:", np.sum(edge_images['NIR_J']['image_data']), np.max(edge_images['NIR_J']['image_data']))
+                        if 'NIR_H' in edge_images:
+                            print("DEBUG_EDGE_GALAXY: edge NIR_H sum/max:", np.sum(edge_images['NIR_H']['image_data']), np.max(edge_images['NIR_H']['image_data']))
+
+                    # Compute per-band expected pixel sums for edge galaxies
+                    # Edge galaxies come from build_edge_galaxy_kwargs_by_band with SED-based colors
+                    # but arbitrary absolute normalization. We now scale each band independently
+                    # to match the Euclid zeropoint formula: m_AB = -2.5*log10(sum(pixels)) + ZP
+                    # Therefore: sum(pixels) = 10^(0.4 * (ZP - m_AB))
+                    # Each edge galaxy has a single AB magnitude, but different bands need different
+                    # pixel sums due to different zeropoints.
+                    edge_ab_mags = edge_rows['AB_magnitude'].to_numpy()
+                    
+                    # Expected pixel sum per band (sum over all edge galaxies)
+                    expected_edge_sums = np.array([
+                        np.sum(10 ** (0.4 * (zeropoints[i] - edge_ab_mags)))
+                        for i in range(len(zeropoints))
+                    ])
+                    
+                    # Actual sums from edge galaxy images (in lenstronomy units)
+                    actual_edge_sums = np.array([
+                        np.sum(edge_images['VIS']['image_data']) if 'VIS' in edge_images else 0.0,
+                        np.sum(edge_images['NIR_Y']['image_data']) if 'NIR_Y' in edge_images else 0.0,
+                        np.sum(edge_images['NIR_J']['image_data']) if 'NIR_J' in edge_images else 0.0,
+                        np.sum(edge_images['NIR_H']['image_data']) if 'NIR_H' in edge_images else 0.0,
+                    ])
+                    
+                    # Compute per-band scale factors for edge galaxies
+                    edge_scale_factors = np.where(actual_edge_sums > 0, expected_edge_sums / actual_edge_sums, 1.0)
+                    
+                    if args.verbose:
+                        print("DEBUG_EDGE_GALAXY: expected edge pixel sums per band:", expected_edge_sums)
+                        print("DEBUG_EDGE_GALAXY: actual edge sums (lenstronomy units):", actual_edge_sums)
+                        print("DEBUG_EDGE_GALAXY: edge scale factors per band:", edge_scale_factors)
+                        print("DEBUG_EDGE_GALAXY: edge scale factors (mag units):", -2.5 * np.log10(edge_scale_factors))
+
+                    # Add scaled edge galaxies to main images
+                    if 'VIS' in edge_images:
+                        VIS_kwargs_data['image_data'] += edge_images['VIS']['image_data'] * edge_scale_factors[0]
+                        if args.verbose:
+                            print("DEBUG_EDGE_GALAXY: edge VIS scaled sum/max:", 
+                              np.sum(edge_images['VIS']['image_data'] * edge_scale_factors[0]), 
+                              np.max(edge_images['VIS']['image_data'] * edge_scale_factors[0]))
+                    if 'NIR_Y' in edge_images:
+                        NIR_Y_kwargs_data['image_data'] += edge_images['NIR_Y']['image_data'] * edge_scale_factors[1]
+                    if 'NIR_J' in edge_images:
+                        NIR_J_kwargs_data['image_data'] += edge_images['NIR_J']['image_data'] * edge_scale_factors[2]
+                    if 'NIR_H' in edge_images:
+                        NIR_H_kwargs_data['image_data'] += edge_images['NIR_H']['image_data'] * edge_scale_factors[3]
             
-            # Verify: calculate mags after scaling using Euclid formula
-            total_pixel_values = np.array([np.sum(VIS_kwargs_data['image_data']), 
-                                        np.sum(NIR_Y_kwargs_data['image_data']),
-                                        np.sum(NIR_J_kwargs_data['image_data']), 
-                                        np.sum(NIR_H_kwargs_data['image_data'])])
-            total_mags = -2.5 * np.log10(total_pixel_values) + zeropoints
+
             if args.verbose:
+                # Verify: calculate mags after scaling using Euclid formula
+                total_pixel_values = np.array([np.sum(VIS_kwargs_data['image_data']), 
+                                            np.sum(NIR_Y_kwargs_data['image_data']),
+                                            np.sum(NIR_J_kwargs_data['image_data']), 
+                                            np.sum(NIR_H_kwargs_data['image_data'])])
+                total_mags = -2.5 * np.log10(total_pixel_values) + zeropoints
                 print('Verified total mags after scaling:', total_mags)
-
-            if False:
-                print('Rescaled Amplitudes:\n', amplitudes)
-                recomped_fluxes = np.zeros_like(amplitudes)
-
-                for i, target in enumerate(['lens', 'source']):
-                    for band_index in range(amplitudes.shape[1]):
-
-                        match band_index:
-                            case 0:
-                                _kwargs_params = copy.deepcopy(VIS_kwargs_params)
-                                _kwargs_params['kwargs_lens_light'][0]['amp'], _kwargs_params['kwargs_source'][0]['amp'] = amplitudes[:, 0]
-                                meta=image_creator.default_Euclid_VIS_image_meta
-                            case 1:
-                                _kwargs_params = copy.deepcopy(NIR_Y_kwargs_params)
-                                _kwargs_params['kwargs_lens_light'][0]['amp'], _kwargs_params['kwargs_source'][0]['amp'] = amplitudes[:, 1]
-                                meta=image_creator.default_Euclid_NIR_Y_image_meta
-                            case 2:
-                                _kwargs_params = copy.deepcopy(NIR_J_kwargs_params)
-                                _kwargs_params['kwargs_lens_light'][0]['amp'], _kwargs_params['kwargs_source'][0]['amp'] = amplitudes[:, 2]
-                                meta=image_creator.default_Euclid_NIR_J_image_meta
-                            case 3:
-                                _kwargs_params = copy.deepcopy(NIR_H_kwargs_params)
-                                _kwargs_params['kwargs_lens_light'][0]['amp'], _kwargs_params['kwargs_source'][0]['amp'] = amplitudes[:, 3]
-                                meta=image_creator.default_Euclid_NIR_H_image_meta
-                        recomped_fluxes[i, band_index] = color_maker.compute_flux(kwargs_params=_kwargs_params, kwargs_model=kwargs_models, meta=
-                        image_creator.default_Euclid_VIS_image_meta, z_source=redshift_dict[target], 
-                                                                        z_lens=redshift_dict[target], to_compute=[target], convergence_factor=1e-2)
-            if False:
-                print(f'Recomputed mags after rescaling amplitudes:\n{-2.5 * np.log10(recomped_fluxes)}')
-
-                recomped_mag_diffs = np.array([-2.5 * np.log10(recomped_fluxes[0]) - (-2.5 * np.log10(recomped_fluxes[0,0])), -2.5 * np.log10(recomped_fluxes[1]) - (-2.5 * np.log10(recomped_fluxes[1,0]))])
-                print(f'MAG diffs:\nExpected:\n{ab_mags_diffs}\nActual:\n{actual_mag_diffs}\nRecomputed:\n{recomped_mag_diffs}')
-            #image_rescale_factors = 10 ** (-0.4 * ())
 
             # construct WCS objects for each band
             # create header object for VIS and NIR filters
@@ -500,7 +637,7 @@ if __name__ == "__main__":
             NIR_H_reprojected = np.nan_to_num(NIR_H_reprojected)
 
             # generate noise for all bands
-            noise_list = generate_noise.generate_noise_image((15, 15))
+            noise_list = generate_noise.generate_noise_image((15, 15), reference_file=f'{args.input_path}/out.csv')
 
             VIS_kwargs_data['image_data'] += noise_list[0]
             NIR_Y_reprojected += noise_list[1]
@@ -521,21 +658,24 @@ if __name__ == "__main__":
             header_list = [VIS_header, NIR_Y_header, NIR_J_header, NIR_H_header]
             filters = ['VIS', 'NIR_Y', 'NIR_J', 'NIR_H']
 
-            output_suffix = f'euclid_spiral_baseclass_{args.base_class}_img_{i}.fits'
-
+            output_suffix = f'euclid_spiral_baseclass_{args.base_class}_img_{j}.fits'
+            if args.verbose:
+                print(f"Saving FITS file for row {j} to {args.output_path}/{output_suffix}...")
             image_creator.save_to_fits(data_list, header_list, filters, args.output_path + '/' + output_suffix)
             
             successful_count += 1
             if args.verbose:
-                print(f"✓ Successfully processed row {i}")
-        
+                print(f"✓ Successfully processed row {j}")
+
+
         except Exception as e:
             failed_count += 1
-            error_msg = f"\n[{datetime.now().isoformat()}] Row {i}: {str(e)}\n{traceback.format_exc()}\n"
-            print(f"✗ Error processing row {i}: {str(e)}")
+            error_msg = f"\n[{datetime.now().isoformat()}] Row {j}: {str(e)}\n{traceback.format_exc()}\n"
+            print(f"✗ Error processing row {j}: {str(e)}")
             
             # Log error to file
             with open(error_log_path, 'a') as f:
+                f.write(f'Error processing row {j}:\n')
                 f.write(error_msg)
     
     # Summary report

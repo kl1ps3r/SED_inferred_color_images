@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import glob
 
@@ -290,6 +291,9 @@ def save_to_csv(galaxy_parameters, filename_prefix):
     galaxy_parameters (dict): A dictionary containing galaxy parameters.
     filename_prefix (str): The prefix for the output CSV files.
     """
+
+    os.makedirs(os.path.dirname(filename_prefix), exist_ok=True)
+
     for galaxy_type, params in galaxy_parameters.items():
         filename = f"{filename_prefix}_{galaxy_type}.csv"
         header = ','.join(params.keys())
@@ -320,10 +324,10 @@ if __name__ == "__main__":
     plt.rc('ytick.major',size=10)
     plt.rc('ytick.minor',size=5)
 
-    output = generate_galaxy_parameters(10000, source=True, deflector=True, verbose=False)
+    output = generate_galaxy_parameters(10, source=True, deflector=True, verbose=False)
 
-    #save_to_csv(output, "galaxy_parameters")
-
+    save_to_csv(output, "./large_test_in/galaxy_parameters_lt_1")
+    exit(0)
     colours={'source':'blue', 'deflector':'red'}
     fig, axes = plt.subplots(2, 4, figsize=(20, 8))
     for i, (galaxy_type, params) in enumerate(output.items()):
