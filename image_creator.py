@@ -151,6 +151,22 @@ class SED_color_calculator:
                                         lens_image=True,
                                         convergence_factor=1e-2,
                                         **kwargs)
+        
+        # Check for zero or invalid flux values
+        if deflector_unit_flux <= 0 or not np.isfinite(deflector_unit_flux):
+            error_msg = f"Invalid deflector flux: {deflector_unit_flux}. "
+            error_msg += f"Deflector params: R_sersic={_kwarg_params['kwargs_lens_light'][0]['R_sersic']:.3f}, "
+            error_msg += f"n_sersic={_kwarg_params['kwargs_lens_light'][0]['n_sersic']:.3f}, "
+            error_msg += f"amp={_kwarg_params['kwargs_lens_light'][0]['amp']:.3e}"
+            raise ValueError(error_msg)
+        
+        if source_unit_flux <= 0 or not np.isfinite(source_unit_flux):
+            error_msg = f"Invalid source flux: {source_unit_flux}. "
+            error_msg += f"Source params: R_sersic={_kwarg_params['kwargs_source'][0]['R_sersic']:.3f}, "
+            error_msg += f"n_sersic={_kwarg_params['kwargs_source'][0]['n_sersic']:.3f}, "
+            error_msg += f"amp={_kwarg_params['kwargs_source'][0]['amp']:.3e}"
+            raise ValueError(error_msg)
+        
         if verbose:
             print(deflector_unit_flux, source_unit_flux, '\n', weighted_mean_fluxes)
         amplitudes = {'lens': weighted_mean_fluxes['lens'] / deflector_unit_flux,
@@ -479,6 +495,19 @@ class SED_color_calculator:
                 raise ValueError("to_compute must contain at least 'lens' or 'source'.")
 
             total_flux = np.sum(img)
+            
+            # Check for invalid flux values
+            if not np.isfinite(total_flux):
+                error_msg = f"Invalid total_flux (NaN or Inf) at iteration {iteration}, num_pix={num_pix}.\n"
+                if 'lens' in to_compute and 'kwargs_lens_light' in kwargs_params:
+                    error_msg += f"Lens params: R_sersic={kwargs_params['kwargs_lens_light'][0].get('R_sersic', 'N/A')}, "
+                    error_msg += f"n_sersic={kwargs_params['kwargs_lens_light'][0].get('n_sersic', 'N/A')}, "
+                    error_msg += f"amp={kwargs_params['kwargs_lens_light'][0].get('amp', 'N/A')}\n"
+                if 'source' in to_compute and 'kwargs_source' in kwargs_params:
+                    error_msg += f"Source params: R_sersic={kwargs_params['kwargs_source'][0].get('R_sersic', 'N/A')}, "
+                    error_msg += f"n_sersic={kwargs_params['kwargs_source'][0].get('n_sersic', 'N/A')}, "
+                    error_msg += f"amp={kwargs_params['kwargs_source'][0].get('amp', 'N/A')}"
+                raise ValueError(error_msg)
 
             flux_diff = total_flux - previous_flux
             num_pix += num_pix_step

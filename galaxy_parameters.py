@@ -182,6 +182,20 @@ def generate_galaxy_parameters(num_galaxies, source=True, deflector=True, rng=np
                 continue
             mean, std = distributions['source'][param][0]
             sampled_values = np.random.normal(mean, std, num_galaxies)
+            
+            # Ensure physical parameters are positive
+            if param in ['effective_radius', 'sersic_index', 'axis_ratio']:
+                sampled_values = np.abs(sampled_values)
+                # Clamp axis_ratio to valid range [0, 1]
+                if param == 'axis_ratio':
+                    sampled_values = np.clip(sampled_values, 0.1, 1.0)
+                # Clamp sersic_index to reasonable range
+                if param == 'sersic_index':
+                    sampled_values = np.clip(sampled_values, 0.3, 8.0)
+                # Ensure effective_radius has a minimum value
+                if param == 'effective_radius':
+                    sampled_values = np.maximum(sampled_values, 0.1)
+            
             combined_parameters[param] = sampled_values
         combined_parameters['redshift'] = redshifts
 
@@ -251,6 +265,20 @@ def generate_galaxy_parameters(num_galaxies, source=True, deflector=True, rng=np
                 continue
             mean, std = distributions['deflector'][param][0]
             sampled_values = np.random.normal(mean, std, num_galaxies)
+            
+            # Ensure physical parameters are positive
+            if param in ['effective_radius', 'sersic_index', 'axis_ratio']:
+                sampled_values = np.abs(sampled_values)
+                # Clamp axis_ratio to valid range [0, 1]
+                if param == 'axis_ratio':
+                    sampled_values = np.clip(sampled_values, 0.1, 1.0)
+                # Clamp sersic_index to reasonable range
+                if param == 'sersic_index':
+                    sampled_values = np.clip(sampled_values, 0.3, 8.0)
+                # Ensure effective_radius has a minimum value
+                if param == 'effective_radius':
+                    sampled_values = np.maximum(sampled_values, 0.1)
+            
             combined_parameters[param] = sampled_values
         combined_parameters['redshift'] = redshifts
 
