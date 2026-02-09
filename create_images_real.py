@@ -339,7 +339,7 @@ if __name__ == "__main__":
 
     # set SED paths
             
-    SED_paths = {'source': f'{args.input_path}/sed_observed_star_forming.csv', 'lens': f'{args.input_path}/Ell13_template_norm.csv'}
+    SED_paths = {'source': f'{args.input_path}/SEDs/sed_observed_star_forming.csv', 'lens': f'{args.input_path}/SEDs/Ell13_template_norm.csv'}
     
     with open(f"{args.input_path}/base_class/main_{args.base_class}/kwargs.pkl", 'rb') as f:
         data = pkl.load(f)
