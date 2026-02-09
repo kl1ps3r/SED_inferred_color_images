@@ -28,6 +28,7 @@ import copy
 import traceback
 from datetime import datetime
 from tqdm import tqdm
+import os
 
 def load_data(filepath):
     with open(filepath, 'rb') as f:
@@ -326,6 +327,9 @@ if __name__ == "__main__":
     parser.add_argument('--verbose', action='store_true',
                         help='Enable verbose output.')
     args = parser.parse_args()
+
+    # create output directory if it doesn't exist
+    os.makedirs(args.output_path, exist_ok=True)
 
     # Set up error logging
     error_log_path = f"{args.output_path}/error_log.txt"
