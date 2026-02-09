@@ -537,51 +537,29 @@ if __name__ == "__main__":
                         if 'NIR_H' in edge_images:
                             print("DEBUG_EDGE_GALAXY: edge NIR_H sum/max:", np.sum(edge_images['NIR_H']['image_data']), np.max(edge_images['NIR_H']['image_data']))
 
-                    # Compute per-band expected pixel sums for edge galaxies
-                    # Edge galaxies come from build_edge_galaxy_kwargs_by_band with SED-based colors
-                    # but arbitrary absolute normalization. We now scale each band independently
-                    # to match the Euclid zeropoint formula: m_AB = -2.5*log10(sum(pixels)) + ZP
-                    # Therefore: sum(pixels) = 10^(0.4 * (ZP - m_AB))
-                    # Each edge galaxy has a single AB magnitude, but different bands need different
-                    # pixel sums due to different zeropoints.
-                    edge_ab_mags = edge_rows['AB_magnitude'].to_numpy()
-                    
-                    # Expected pixel sum per band (sum over all edge galaxies)
-                    expected_edge_sums = np.array([
-                        np.sum(10 ** (0.4 * (zeropoints[i] - edge_ab_mags)))
-                        for i in range(len(zeropoints))
-                    ])
-                    
-                    # Actual sums from edge galaxy images (in lenstronomy units)
-                    actual_edge_sums = np.array([
-                        np.sum(edge_images['VIS']['image_data']) if 'VIS' in edge_images else 0.0,
-                        np.sum(edge_images['NIR_Y']['image_data']) if 'NIR_Y' in edge_images else 0.0,
-                        np.sum(edge_images['NIR_J']['image_data']) if 'NIR_J' in edge_images else 0.0,
-                        np.sum(edge_images['NIR_H']['image_data']) if 'NIR_H' in edge_images else 0.0,
-                    ])
-                    
-                    # Compute per-band scale factors for edge galaxies
-                    edge_scale_factors = np.where(actual_edge_sums > 0, expected_edge_sums / actual_edge_sums, 1.0)
+                    # Apply the same scale factors as the main galaxies
+                    # Edge galaxies use the same SED-based amplitude calculation, so they're in the
+                    # same lenstronomy flux units. Using the same scale_factors ensures consistent
+                    # flux calibration without overcorrecting for edge galaxies that are partially
+                    # outside the frame (which would have artificially low pixel sums).
                     
                     if args.verbose:
-                        print("DEBUG_EDGE_GALAXY: expected edge pixel sums per band:", expected_edge_sums)
-                        print("DEBUG_EDGE_GALAXY: actual edge sums (lenstronomy units):", actual_edge_sums)
-                        print("DEBUG_EDGE_GALAXY: edge scale factors per band:", edge_scale_factors)
-                        print("DEBUG_EDGE_GALAXY: edge scale factors (mag units):", -2.5 * np.log10(edge_scale_factors))
+                        print("DEBUG_EDGE_GALAXY: using main galaxy scale_factors:", scale_factors)
+                        print("DEBUG_EDGE_GALAXY: scale_factors (mag units):", -2.5 * np.log10(scale_factors))
 
                     # Add scaled edge galaxies to main images
                     if 'VIS' in edge_images:
-                        VIS_kwargs_data['image_data'] += edge_images['VIS']['image_data'] * edge_scale_factors[0]
+                        VIS_kwargs_data['image_data'] += edge_images['VIS']['image_data'] * scale_factors[0]
                         if args.verbose:
                             print("DEBUG_EDGE_GALAXY: edge VIS scaled sum/max:", 
-                              np.sum(edge_images['VIS']['image_data'] * edge_scale_factors[0]), 
-                              np.max(edge_images['VIS']['image_data'] * edge_scale_factors[0]))
+                              np.sum(edge_images['VIS']['image_data'] * scale_factors[0]), 
+                              np.max(edge_images['VIS']['image_data'] * scale_factors[0]))
                     if 'NIR_Y' in edge_images:
-                        NIR_Y_kwargs_data['image_data'] += edge_images['NIR_Y']['image_data'] * edge_scale_factors[1]
+                        NIR_Y_kwargs_data['image_data'] += edge_images['NIR_Y']['image_data'] * scale_factors[1]
                     if 'NIR_J' in edge_images:
-                        NIR_J_kwargs_data['image_data'] += edge_images['NIR_J']['image_data'] * edge_scale_factors[2]
+                        NIR_J_kwargs_data['image_data'] += edge_images['NIR_J']['image_data'] * scale_factors[2]
                     if 'NIR_H' in edge_images:
-                        NIR_H_kwargs_data['image_data'] += edge_images['NIR_H']['image_data'] * edge_scale_factors[3]
+                        NIR_H_kwargs_data['image_data'] += edge_images['NIR_H']['image_data'] * scale_factors[3]
             
 
             if args.verbose:
