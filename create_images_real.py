@@ -619,7 +619,7 @@ if __name__ == "__main__":
             NIR_H_reprojected = np.nan_to_num(NIR_H_reprojected)
 
             # generate noise for all bands
-            noise_list = generate_noise.generate_noise_image((15, 15), reference_file=f'{args.input_path}/out.csv')
+            noise_list = generate_noise.generate_noise_image((15, 15), reference_file=f'{args.input_path}/noise_values.csv')
 
             VIS_kwargs_data['image_data'] += noise_list[0]
             NIR_Y_reprojected += noise_list[1]
