@@ -1,3 +1,4 @@
+from glob import glob
 import image_creator
 import generate_noise
 import argparse
@@ -29,6 +30,8 @@ import traceback
 from datetime import datetime
 from tqdm import tqdm
 import os
+
+from glob import glob
 
 def load_data(filepath):
     with open(filepath, 'rb') as f:
@@ -132,12 +135,17 @@ def create_image_data(kwargs_model, kwargs_params, pixel_scale, num_pixels, exp_
     
     # generate image
     image_model = image_model.image(kwargs_params['kwargs_lens'], kwargs_params['kwargs_source'], kwargs_lens_light=kwargs_params['kwargs_lens_light'], kwargs_ps=None)
+    #print(exp_time)
+    #poisson_noise = image_util.add_poisson(image_model, exp_time=exp_time)
+    #background_noise = data_class.background_rms * np.random.normal(size=image_model.shape)
 
-    poisson_noise = image_util.add_poisson(image_model, exp_time=exp_time)
-    background_noise = data_class.background_rms * np.random.normal(size=image_model.shape)
+    '''    poisson_files = glob('./output_test_poisson_noise/*.png')
+    next_index = np.max([int(f.split('/')[-1].split('.')[0]) for f in poisson_files]) + 1 if poisson_files else 0
+    plt.imshow(poisson_noise, origin='lower', cmap='gray')
+    plt.savefig(f'./output_test_poisson_noise/{next_index}.png')'''
 
     if add_noise:
-        image_real = image_model + poisson_noise #+ background_noise
+        image_real = image_model #+ poisson_noise #+ background_noise
     else:
         image_real = image_model
 
@@ -385,7 +393,7 @@ if __name__ == "__main__":
 
     # set SED paths
             
-    SED_paths = {'source': f'{args.input_path}/SEDs/sed_observed_star_forming.csv', 'lens': f'{args.input_path}/SEDs/Ell13_template_norm.csv'}
+    SED_paths = {'source': f'{args.input_path}/SEDs/sed_rest_frame_star_forming.csv', 'lens': f'{args.input_path}/SEDs/Ell13_template_norm.csv'}
     
     with open(f"{args.input_path}/base_class/main_{args.base_class}/kwargs.pkl", 'rb') as f:
         data = pkl.load(f)
@@ -399,7 +407,11 @@ if __name__ == "__main__":
 
     edge_galaxy_df = None
     if args.edge_galaxy:
-        edge_galaxy_df = load_edge_galaxies_by_image(args.input_path + '/' + args.edge_galaxy)
+        try:
+            edge_galaxy_df = load_edge_galaxies_by_image(args.input_path + '/' + args.edge_galaxy)
+        except Exception as e:
+            logging.warning(f"Empty additional galaxy CSV or failed to load: {e}")
+            edge_galaxy_df = None
     
     successful_count = 0
     failed_count = 0
@@ -618,6 +630,12 @@ if __name__ == "__main__":
                         if 'NIR_H' in edge_images:
                             NIR_H_kwargs_data['image_data'] += edge_images['NIR_H']['image_data'] * scale_factors[3]
                 
+                # add poisson noise
+                for band_index, (band_data, meta) in enumerate(zip([VIS_kwargs_data, NIR_Y_kwargs_data, NIR_J_kwargs_data, NIR_H_kwargs_data],
+                                                                    [image_creator.default_Euclid_VIS_image_meta, image_creator.default_Euclid_NIR_Y_image_meta, image_creator.default_Euclid_NIR_J_image_meta, image_creator.default_Euclid_NIR_H_image_meta])):
+                    poisson_noise = image_util.add_poisson(band_data['image_data'], exp_time=meta['exposure_time'])
+                    band_data['image_data'] += poisson_noise
+
 
                 if args.verbose:
                     # Verify: calculate mags after scaling using Euclid formula

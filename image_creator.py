@@ -806,21 +806,21 @@ default_Euclid_VIS_image_meta = {
 }
 default_Euclid_NIR_Y_image_meta = default_Euclid_VIS_image_meta.copy()
 default_Euclid_NIR_Y_image_meta.update({
-    'exposure_time': 87.2448,
+    'exposure_time': 87.2 * 4.0,
     'psf_fwhm': 0.475,
     'pixel_scale': 0.3,
     'num_pix': 50,
 })
 default_Euclid_NIR_J_image_meta = default_Euclid_VIS_image_meta.copy()
 default_Euclid_NIR_J_image_meta.update({
-    'exposure_time': 87.2448,
+    'exposure_time': 87.2 * 4.0,
     'psf_fwhm': 0.504,
     'pixel_scale': 0.3,
     'num_pix': 50,
 })
 default_Euclid_NIR_H_image_meta = default_Euclid_VIS_image_meta.copy()
 default_Euclid_NIR_H_image_meta.update({
-    'exposure_time': 87.2448,
+    'exposure_time': 87.2 * 4.0,
     'psf_fwhm': 0.542,
     'pixel_scale': 0.3,
     'num_pix': 50,

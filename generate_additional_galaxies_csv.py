@@ -2,12 +2,13 @@ import argparse
 import os
 import numpy as np
 import pandas as pd
+import time
 
 # -----------------------------
 # Editable distributions/config
 # -----------------------------
 POISSON_LAMBDA = 0.6
-RNG_SEED = 42
+RNG_SEED = int(time.time())  # Use current time as seed for variability; can be set to a fixed value for reproducibility
 
 DISTRIBUTIONS = {
     "effective_radius_kpc": {"dist": "normal", "mean": 3.5, "std": 1.5, "min": 0.1},

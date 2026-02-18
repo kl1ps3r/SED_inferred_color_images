@@ -25,7 +25,7 @@ distributions = {
                 [1.38, 0.62]
             ]),
         'axis_ratio': np.array([[0.7, 0.15]]),
-        'AB_magnitude': np.array([[23.5, 0.5]]),
+        'AB_magnitude': np.array([[26, 0.5]]),
         'pos_x_offset': np.array([[0.0, 0.05]]),
         'pos_y_offset': np.array([[0.0, 0.05]]),
         'angle_offset': np.array([[0.0, np.pi/16]]),
