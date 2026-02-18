@@ -826,6 +826,17 @@ default_Euclid_NIR_H_image_meta.update({
     'num_pix': 50,
 })
 
+roman_image_meta = {
+    'num_pix': 100,
+    'pixel_scale': 0.11,  
+    'psf_fwhm': 0.15,  
+    'ra_at_xy_0': 0.0,  
+    'dec_at_xy_0': 0.0,  
+    'exposure_time': 6 * 107.0,  # 6 exposures of 107s each
+    'supersampling_factor': 3,
+    'supersampling_convolution': False
+}
+
 def plot(SED, filter_throughput):
     fig, ax1 = plt.subplots(figsize=(10, 4))
 
