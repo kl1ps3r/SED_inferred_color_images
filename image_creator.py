@@ -592,7 +592,7 @@ class SED_color_calculator:
             filter_name = image_meta.get('filter_name', None)
             if filter_name is None:
                 raise ValueError("If 'psf_fwhm' is not provided in image_meta, 'filter_name' must be provided to determine PSF.")
-            
+
             psf_data = load_psf_roman(filter_name)
             kwargs_psf = {
                 'psf_type': 'PIXEL',
@@ -876,11 +876,10 @@ default_Euclid_NIR_H_image_meta.update({
 
 roman_image_meta = {
     'num_pix': 100,
-    'pixel_scale': 0.11,  
-    'psf_fwhm': 0.15,  
+    'pixel_scale': 0.11,    
     'ra_at_xy_0': 0.0,  
     'dec_at_xy_0': 0.0,  
-    'exposure_time': 6 * 107.0,  # 6 exposures of 107s each
+    'exposure_time': 3 * 107.0,  # 6 exposures of 107s each
     'supersampling_factor': 3,
     'supersampling_convolution': False
 }
