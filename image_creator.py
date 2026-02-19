@@ -53,8 +53,9 @@ class SED_color_calculator:
             raise IOError(f"Error loading SED from {path}: \n{e}")
         
     def load_filters_throughputs(self, filter_names, **kwargs):
+        verbose = kwargs.get('verbose', False)
         if filter_names == 'Euclid':
-            verbose = kwargs.get('verbose', False)
+            
             if verbose:
                 print("Loading Euclid filter throughputs...")
 
@@ -74,6 +75,21 @@ class SED_color_calculator:
             self.filter_throughputs = [np.array([temp[0][0][Euclid_VIS_mask], temp[0][1][Euclid_VIS_mask]])]
             for filter in temp[1:]:
                 self.filter_throughputs.append(filter)
+
+        elif filter_names == 'Roman':
+
+            if verbose:
+                print("Loading Roman filter throughputs...")
+
+            # get file list of Roman filter throughputs in ./Roman_filters/
+            filter_files = [f for f in os.listdir('./Roman_filters/') if f.endswith('.csv')]
+            self.filter_throughputs = []
+            for filter_file in filter_files:
+                data = np.loadtxt(os.path.join('./Roman_filters/', filter_file), delimiter=',', skiprows=1, unpack=True)
+                self.filter_throughputs.append(data)
+
+        else:
+            raise NotImplementedError("Only 'Euclid' and 'Roman' filter throughputs are currently implemented.")
 
     def initialise_filter_image_meta_dicts(self, filter_names):
         self.kwargs_data = {}
