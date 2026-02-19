@@ -92,7 +92,7 @@ def e_to_q_phi(e1, e2):
     return q, phi
 
 def create_image_data(kwargs_model, kwargs_params, pixel_scale, num_pixels, exp_time, bkg_rms, psf_fwhm, 
-                      lens_redshifts, source_redshifts, cosmo, add_noise=True):
+                      lens_redshifts, source_redshifts, cosmo, add_noise=True, **kwargs):
     
     kwargs_data = {
         'background_rms': bkg_rms,  # rms of background noise
@@ -102,13 +102,13 @@ def create_image_data(kwargs_model, kwargs_params, pixel_scale, num_pixels, exp_
         'transform_pix2angle': np.array([[pixel_scale, 0], [0, pixel_scale]]),  # matrix to translate shift in pixel in shift in relative RA/DEC (2x2 matrix). Make sure it's units are arcseconds or the angular units you want to model.
         'image_data': np.zeros((num_pixels, num_pixels))
     }
-
-    kwargs_psf = {
+    
+    kwargs_psf = kwargs.get('kwargs_psf', {
         'psf_type': 'GAUSSIAN', 
         'fwhm': psf_fwhm, 
         'pixel_size': pixel_scale, 
         'truncation': 12
-        }
+        })
     
     kwargs_numerics = {'supersampling_factor': 4, 'supersampling_convolution': False}
 

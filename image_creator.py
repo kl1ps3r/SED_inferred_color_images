@@ -99,8 +99,12 @@ class SED_color_calculator:
         if filter_names == 'Euclid':
             for filter in ['VIS', 'NIR_Y', 'NIR_J', 'NIR_H']:
                 self.kwargs_data[filter], self.kwargs_psf[filter], self.kwargs_numerics[filter] = self.meta_to_dicts(globals()[f'default_Euclid_{filter}_image_meta'])
+        
+        elif filter_names == 'Roman':
+            for filter in ['F106', 'F129', 'F158']:
+                self.kwargs_data[filter], self.kwargs_psf[filter], self.kwargs_numerics[filter] = self.meta_to_dicts(globals()['roman_image_meta'])
         else:
-            raise NotImplementedError("Only 'Euclid' filter image meta dicts is currently implemented.")
+            raise NotImplementedError("Only 'Euclid' and 'Roman' filter image meta dicts are currently implemented.")
 
     def get_amplitudes(self, target_AB_mags, kwargs_model, kwarg_params, redshifts:dict, **kwargs):
 
@@ -553,7 +557,7 @@ class SED_color_calculator:
         return total_flux * kwargs_data['transform_pix2angle'][0,0]**2  # scale by pixel area
 
     @staticmethod
-    def meta_to_dicts(image_meta):
+    def meta_to_dicts(image_meta, **kwargs):
         '''
         Convert image metadata to LENSTRONOMY kwargs dictionaries for data, psf, and numerics.
         Parameters:
@@ -578,12 +582,23 @@ class SED_color_calculator:
             'dec_at_xy_0': image_meta['dec_at_xy_0'],
             'exposure_time': image_meta['exposure_time']
         }
-
-        kwargs_psf = {
-            'psf_type': 'GAUSSIAN',
-            'fwhm': image_meta['psf_fwhm'],
-            'pixel_size': image_meta['pixel_scale']
-        }
+        if 'psf_fwhm' in image_meta:
+            kwargs_psf = {
+                'psf_type': 'GAUSSIAN',
+                'fwhm': image_meta['psf_fwhm'],
+                'pixel_size': image_meta['pixel_scale']
+            }
+        else:
+            filter_name = image_meta.get('filter_name', None)
+            if filter_name is None:
+                raise ValueError("If 'psf_fwhm' is not provided in image_meta, 'filter_name' must be provided to determine PSF.")
+            
+            psf_data = load_psf_roman(filter_name)
+            kwargs_psf = {
+                'psf_type': 'PIXEL',
+                'kernel_point_source': psf_data,
+                'kernel_point_source_init': psf_data 
+            }
 
         kwargs_numerics = {
             'supersampling_factor': image_meta['supersampling_factor'],
@@ -808,6 +823,23 @@ def save_to_fits(data_list, header_list, filter_names, output_filename):
 
     os.makedirs(os.path.dirname(output_filename), exist_ok=True)
     hdu_list.writeto(output_filename, overwrite=True)
+
+def load_psf_roman(filter_name):
+    filter_to_psf_file = {
+        'F106': './roman_psfs/psf_F106.fits',
+        'F129': './roman_psfs/psf_F129.fits',
+        'F158': './roman_psfs/psf_F158.fits'
+    }
+    if filter_name not in filter_to_psf_file:
+        raise ValueError(f"Filter name '{filter_name}' not recognized. Valid options are: {list(filter_to_psf_file.keys())}")
+    
+    psf_file = filter_to_psf_file[filter_name]
+    try:
+        with fits.open(psf_file) as hdul:
+            psf_data = hdul[0].data
+            return psf_data
+    except Exception as e:
+        raise IOError(f"Error loading PSF from {psf_file}: \n{e}")
 
 default_Euclid_VIS_image_meta = {
     'num_pix': 150,
