@@ -38,7 +38,7 @@ class SED_color_calculator:
         if telescope == 'Euclid':
             self.filter_names = ['VIS', 'NIR_Y', 'NIR_J', 'NIR_H']
         elif telescope == 'Roman':
-            self.filter_names = ['F106', 'F129', 'F158']
+            self.filter_names = ['VIS', 'F106', 'F129', 'F158']
 
         self.load_filters_throughputs(telescope, verbose=kwargs.get('verbose', False))
         self.initialise_filter_image_meta_dicts(telescope)
@@ -116,7 +116,10 @@ class SED_color_calculator:
         
         elif filter_names == 'Roman':
             for filter in self.filter_names:
-                meta = globals()[f'roman_image_meta']
+                if filter == 'VIS':
+                    meta = globals()[f'default_Euclid_VIS_image_meta']
+                else:
+                    meta = globals()[f'roman_image_meta']
                 meta['filter_name'] = filter
                 self.kwargs_data[filter], self.kwargs_psf[filter], self.kwargs_numerics[filter] = self.meta_to_dicts(meta)
         else:
@@ -862,8 +865,8 @@ default_Euclid_VIS_image_meta = {
     'pixel_scale': 0.1,  
     'psf_fwhm': 0.203,  
     'background_rms': 0.1, 
-    'ra_at_xy_0': 0.0,  
-    'dec_at_xy_0': 0.0,  
+    'ra_at_xy_0': -150 * 0.1 / 2,  # RA at pixel (0,0) — places ra=0 at the central pixel
+    'dec_at_xy_0': -150 * 0.1 / 2,  # DEC at pixel (0,0)
     'exposure_time': 2422.0,
     'supersampling_factor': 3,
     'supersampling_convolution': False
@@ -874,6 +877,8 @@ default_Euclid_NIR_Y_image_meta.update({
     'psf_fwhm': 0.475,
     'pixel_scale': 0.3,
     'num_pix': 50,
+    'ra_at_xy_0': -50 * 0.3 / 2,
+    'dec_at_xy_0': -50 * 0.3 / 2,
 })
 default_Euclid_NIR_J_image_meta = default_Euclid_VIS_image_meta.copy()
 default_Euclid_NIR_J_image_meta.update({
@@ -881,6 +886,8 @@ default_Euclid_NIR_J_image_meta.update({
     'psf_fwhm': 0.504,
     'pixel_scale': 0.3,
     'num_pix': 50,
+    'ra_at_xy_0': -50 * 0.3 / 2,
+    'dec_at_xy_0': -50 * 0.3 / 2,
 })
 default_Euclid_NIR_H_image_meta = default_Euclid_VIS_image_meta.copy()
 default_Euclid_NIR_H_image_meta.update({
@@ -888,13 +895,15 @@ default_Euclid_NIR_H_image_meta.update({
     'psf_fwhm': 0.542,
     'pixel_scale': 0.3,
     'num_pix': 50,
+    'ra_at_xy_0': -50 * 0.3 / 2,
+    'dec_at_xy_0': -50 * 0.3 / 2,
 })
 
 roman_image_meta = {
     'num_pix': 100,
     'pixel_scale': 0.11,    
-    'ra_at_xy_0': 0.0,  
-    'dec_at_xy_0': 0.0,  
+    'ra_at_xy_0': -100 * 0.11 / 2,  # RA at pixel (0,0) — places ra=0 at the central pixel
+    'dec_at_xy_0': -100 * 0.11 / 2,  # DEC at pixel (0,0)
     'exposure_time': 3 * 107.0,  # 6 exposures of 107s each
     'supersampling_factor': 3,
     'supersampling_convolution': False,

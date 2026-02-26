@@ -91,7 +91,7 @@ def e_to_q_phi(e1, e2):
     phi = 0.5 * np.arctan2(e2, e1)
     return q, phi
 
-def create_image_data(kwargs_model, kwargs_params, kwargs_data, kwargs_psf, cosmo, add_noise=True, **kwargs):
+def create_image_data(kwargs_model, kwargs_params, kwargs_data, kwargs_psf, cosmo, lens_redshifts, source_redshifts, add_noise=True, **kwargs):
     
     '''kwargs_data = {
         'background_rms': bkg_rms,  # rms of background noise
@@ -112,7 +112,7 @@ def create_image_data(kwargs_model, kwargs_params, kwargs_data, kwargs_psf, cosm
     kwargs_numerics = {'supersampling_factor': 4, 'supersampling_convolution': False}
 
     coords = Coordinates(kwargs_data['transform_pix2angle'], kwargs_data['ra_at_xy_0'], kwargs_data['dec_at_xy_0'])
-    kwargs_pixel = {'nx': num_pixels, 'ny': num_pixels,  # number of pixels per axis
+    kwargs_pixel = {'nx': kwargs_data['image_data'].shape[1], 'ny': kwargs_data['image_data'].shape[0],  # number of pixels per axis
                 'ra_at_xy_0': kwargs_data['ra_at_xy_0'],  # RA at pixel (0,0)
                 'dec_at_xy_0': kwargs_data['dec_at_xy_0'],  # DEC at pixel (0,0)
                 'transform_pix2angle': kwargs_data['transform_pix2angle']} 
@@ -345,7 +345,7 @@ def create_edge_galaxy_image_data(edge_light_kwargs_by_band, kwargs_model, cosmo
 
     return edge_images
 
-def euclid_image_loop(SED_paths, kwargs_models, cosmo, zeropoints, edge_galaxy_df, error_log_path):
+def euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints, edge_galaxy_df, error_log_path, deflector_row, source_row, args):
     # Capture warnings for this specific row
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always")
@@ -554,7 +554,7 @@ def euclid_image_loop(SED_paths, kwargs_models, cosmo, zeropoints, edge_galaxy_d
             for band_index, (band_data, meta) in enumerate(zip([VIS_kwargs_data, NIR_Y_kwargs_data, NIR_J_kwargs_data, NIR_H_kwargs_data],
                                                                 [image_creator.default_Euclid_VIS_image_meta, image_creator.default_Euclid_NIR_Y_image_meta, image_creator.default_Euclid_NIR_J_image_meta, image_creator.default_Euclid_NIR_H_image_meta])):
                 poisson_noise = image_util.add_poisson(band_data['image_data'], exp_time=meta['exposure_time'])
-                band_data['image_data'] += poisson_noise
+                #band_data['image_data'] += poisson_noise
 
 
             if args.verbose:
@@ -609,16 +609,17 @@ def euclid_image_loop(SED_paths, kwargs_models, cosmo, zeropoints, edge_galaxy_d
             NIR_J_reprojected = np.nan_to_num(NIR_J_reprojected)
             NIR_H_reprojected = np.nan_to_num(NIR_H_reprojected)
 
-            # generate noise for all bands
-            if args.image_mode == 'Euclid':
-                noise_list = generate_noise.generate_noise_image((15, 15), reference_file=f'{args.input_path}/noise_values.csv')
-            elif args.image_mode == 'Roman':
-                noise_list = generate_noise.generate_noise_image((15, 15), reference_file=None, filters=['F106', 'F129', 'F158'], roman_mode='single')
+            if args.dont_add_noise:
+                # generate noise for all bands
+                if args.image_mode == 'Euclid':
+                    noise_list = generate_noise.generate_noise_image((15, 15), reference_file=f'{args.input_path}/noise_values.csv')
+                elif args.image_mode == 'Roman':
+                    noise_list = generate_noise.generate_noise_image((15, 15), reference_file=None, filters=['F106', 'F129', 'F158'], roman_mode='single')
 
-            VIS_kwargs_data['image_data'] += noise_list[0]
-            NIR_Y_reprojected += noise_list[1]
-            NIR_J_reprojected += noise_list[2]
-            NIR_H_reprojected += noise_list[3]
+                VIS_kwargs_data['image_data'] += noise_list[0]
+                NIR_Y_reprojected += noise_list[1]
+                NIR_J_reprojected += noise_list[2]
+                NIR_H_reprojected += noise_list[3]
 
             # save images and headers
             data_list = [VIS_kwargs_data['image_data'], NIR_Y_reprojected, NIR_J_reprojected, NIR_H_reprojected]
@@ -663,7 +664,7 @@ def euclid_image_loop(SED_paths, kwargs_models, cosmo, zeropoints, edge_galaxy_d
 
             return False  # indicate failure
 
-def roman_image_loop(SED_paths, kwargs_models, cosmo, zeropoints, edge_galaxy_df, error_log_path):
+def roman_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints, edge_galaxy_df, error_log_path, deflector_row, source_row, args):
     # Capture warnings for this specific row
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always")
@@ -870,9 +871,9 @@ def roman_image_loop(SED_paths, kwargs_models, cosmo, zeropoints, edge_galaxy_df
             
             # add poisson noise
             for band_index, (band_data, meta) in enumerate(zip([VIS_kwargs_data, F106_kwargs_data, F129_kwargs_data, F158_kwargs_data],
-                                                                [image_creator.default_Euclid_VIS_image_meta, image_creator.default_Euclid_F106_image_meta, image_creator.default_Euclid_F129_image_meta, image_creator.default_Euclid_F158_image_meta])):
+                                                                [image_creator.default_Euclid_VIS_image_meta, image_creator.roman_image_meta, image_creator.roman_image_meta, image_creator.roman_image_meta])):
                 poisson_noise = image_util.add_poisson(band_data['image_data'], exp_time=meta['exposure_time'])
-                band_data['image_data'] += poisson_noise
+                #band_data['image_data'] += poisson_noise
 
 
             if args.verbose:
@@ -918,7 +919,7 @@ def roman_image_loop(SED_paths, kwargs_models, cosmo, zeropoints, edge_galaxy_df
             roman_header['simple'] = True
 
             # generate noise for all bands
-            if args.add_noise:
+            if args.dont_add_noise:
                 if args.image_mode == 'Euclid':
                     noise_list = generate_noise.generate_noise_image((15, 15), reference_file=f'{args.input_path}/noise_values.csv')
                 elif args.image_mode == 'Roman':
@@ -989,6 +990,7 @@ if __name__ == "__main__":
     parser.add_argument('--source_params', type=str, default='source.csv', help='source parameter CSV files (optional).')
     parser.add_argument('--image_mode', type=str, choices=['Euclid', 'Roman'], default='Euclid', help='Whether to generate images in Euclid or Roman mode. This affects the noise generation and image properties.')
     parser.add_argument('--comparison', action='store_true', help='Run in comparison mode to make images still in AB units (not scaled by filter zeropoints).')
+    parser.add_argument('--dont_add_noise', action='store_false', help='Whether to add noise to the images.', default=False)
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output.')
     args = parser.parse_args()
 
@@ -1049,14 +1051,16 @@ if __name__ == "__main__":
 
     for j, (deflector_row, source_row) in enumerate(tqdm(zip(deflector_augments.itertuples(index=False), source_augments.itertuples(index=False)), total=len(deflector_augments))):
         if args.image_mode == 'Euclid':
-            success = euclid_image_loop(SED_paths, kwargs_models, cosmo, zeropoints, edge_galaxy_df, error_log_path)
-            if success:
-                successful_count += 1
-            else:
-                failed_count += 1
+            success = euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints, edge_galaxy_df, error_log_path, deflector_row, source_row, args)
+
         elif args.image_mode == 'Roman':
-            pass
-            
+            success = roman_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints, edge_galaxy_df, error_log_path, deflector_row, source_row, args)
+
+        if success:
+            successful_count += 1
+        else:
+            failed_count += 1      
+        
     # Summary report
     print(f"\n{'='*60}")
     print(f"Processing complete!")
