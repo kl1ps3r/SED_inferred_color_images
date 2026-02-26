@@ -228,5 +228,6 @@ main*/
 opt*/
 plots/
 large_test*/
-output*/
+*output*/
 inputs/
+roman*/
