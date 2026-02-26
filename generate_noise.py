@@ -27,6 +27,7 @@ def generate_noise_image(image_size, filters=EUCLID_FILTERS, reference_file='./o
 
     for f in filters:
         if f in EUCLID_FILTERS:
+            print(f)            
             df = pd.read_csv(reference_file)
             std_dev = df[df['filter'] == f]['global_std'].iloc[rng.integers(0, len(df)//4)]  # Randomly select a noise level from the reference file
             mean = df[df['filter'] == f]['global_mean'].iloc[rng.integers(0, len(df)//4)]

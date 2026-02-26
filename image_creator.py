@@ -32,13 +32,18 @@ class SED_color_calculator:
             from astropy.cosmology import FlatLambdaCDM
             
             self.cosmology = FlatLambdaCDM(H0=70 * u.km / u.s / u.Mpc, Om0=0.3, Ob0=0.05)
+        
+        telescope = kwargs.get('telescope', 'Euclid')
 
-        if 'filter_throughputs' in kwargs:
-            self.filter_throughputs = kwargs['filter_throughputs']
-            self.initialise_filter_image_meta_dicts(kwargs['filter_throughputs'].keys())
-        else:
-            self.load_filters_throughputs('Euclid', **kwargs)
-            self.initialise_filter_image_meta_dicts('Euclid')
+        if telescope == 'Euclid':
+            self.filter_names = ['VIS', 'NIR_Y', 'NIR_J', 'NIR_H']
+        elif telescope == 'Roman':
+            self.filter_names = ['F106', 'F129', 'F158']
+
+        self.load_filters_throughputs(telescope, verbose=kwargs.get('verbose', False))
+        self.initialise_filter_image_meta_dicts(telescope)
+
+        
 
     def load_SEDs(self, SED_paths):
         self.SEDs = {}
@@ -77,15 +82,24 @@ class SED_color_calculator:
                 self.filter_throughputs.append(filter)
 
         elif filter_names == 'Roman':
+            import photometry
+            pbs = [{'file': 'VIS.Euclid.pb', 'outCol': 'TU_Fnu_VIS', 'band': None, 'name': 'VIS'}]
+            for pb in pbs:
+                pb['band'] = photometry.Passband(file=pb['file'])
+
+            temp = [np.array([pb['band'].lam(unit=u.Angstrom).value, pb['band'].y]) for pb in pbs]
+
+            Euclid_VIS_mask = 3450. < temp[0][0]
 
             if verbose:
                 print("Loading Roman filter throughputs...")
 
             # get file list of Roman filter throughputs in ./Roman_filters/
             filter_files = [f for f in os.listdir('./Roman_filters/') if f.endswith('.csv')]
-            self.filter_throughputs = []
+            self.filter_throughputs = [np.array([temp[0][0][Euclid_VIS_mask], temp[0][1][Euclid_VIS_mask]])]
             for filter_file in filter_files:
                 data = np.loadtxt(os.path.join('./Roman_filters/', filter_file), delimiter=',', skiprows=1, unpack=True)
+                data[0] *= 1e4  # convert from microns to Angstrom
                 self.filter_throughputs.append(data)
 
         else:
@@ -97,12 +111,14 @@ class SED_color_calculator:
         self.kwargs_numerics = {}
 
         if filter_names == 'Euclid':
-            for filter in ['VIS', 'NIR_Y', 'NIR_J', 'NIR_H']:
+            for filter in self.filter_names:
                 self.kwargs_data[filter], self.kwargs_psf[filter], self.kwargs_numerics[filter] = self.meta_to_dicts(globals()[f'default_Euclid_{filter}_image_meta'])
         
         elif filter_names == 'Roman':
-            for filter in ['F106', 'F129', 'F158']:
-                self.kwargs_data[filter], self.kwargs_psf[filter], self.kwargs_numerics[filter] = self.meta_to_dicts(globals()['roman_image_meta'])
+            for filter in self.filter_names:
+                meta = globals()[f'roman_image_meta']
+                meta['filter_name'] = filter
+                self.kwargs_data[filter], self.kwargs_psf[filter], self.kwargs_numerics[filter] = self.meta_to_dicts(meta)
         else:
             raise NotImplementedError("Only 'Euclid' and 'Roman' filter image meta dicts are currently implemented.")
 
@@ -881,7 +897,8 @@ roman_image_meta = {
     'dec_at_xy_0': 0.0,  
     'exposure_time': 3 * 107.0,  # 6 exposures of 107s each
     'supersampling_factor': 3,
-    'supersampling_convolution': False
+    'supersampling_convolution': False,
+    'background_rms': 0.1,  # Placeholder value; should be set based on expected noise characteristics
 }
 
 def plot(SED, filter_throughput):
