@@ -860,13 +860,15 @@ def load_psf_roman(filter_name):
     except Exception as e:
         raise IOError(f"Error loading PSF from {psf_file}: \n{e}")
 
+physical_area = 15
+
 default_Euclid_VIS_image_meta = {
-    'num_pix': 150,
+    'num_pix': int(physical_area / 0.1),  # 150 pixels to cover 15 arcseconds at 0.1"/pixel
     'pixel_scale': 0.1,  
     'psf_fwhm': 0.203,  
     'background_rms': 0.1, 
-    'ra_at_xy_0': -150 * 0.1 / 2,  # RA at pixel (0,0) — places ra=0 at the central pixel
-    'dec_at_xy_0': -150 * 0.1 / 2,  # DEC at pixel (0,0)
+    'ra_at_xy_0': -physical_area / 2,  # RA at pixel (0,0) — places ra=0 at the central pixel
+    'dec_at_xy_0': -physical_area / 2,  # DEC at pixel (0,0)
     'exposure_time': 2422.0,
     'supersampling_factor': 3,
     'supersampling_convolution': False
@@ -876,34 +878,34 @@ default_Euclid_NIR_Y_image_meta.update({
     'exposure_time': 87.2 * 4.0,
     'psf_fwhm': 0.475,
     'pixel_scale': 0.3,
-    'num_pix': 50,
-    'ra_at_xy_0': -50 * 0.3 / 2,
-    'dec_at_xy_0': -50 * 0.3 / 2,
+    'num_pix': int(physical_area / 0.3),  # 50 pixels to cover 15 arcseconds at 0.3"/pixel
+    'ra_at_xy_0': -physical_area / 2,
+    'dec_at_xy_0': -physical_area / 2,
 })
 default_Euclid_NIR_J_image_meta = default_Euclid_VIS_image_meta.copy()
 default_Euclid_NIR_J_image_meta.update({
     'exposure_time': 87.2 * 4.0,
     'psf_fwhm': 0.504,
     'pixel_scale': 0.3,
-    'num_pix': 50,
-    'ra_at_xy_0': -50 * 0.3 / 2,
-    'dec_at_xy_0': -50 * 0.3 / 2,
+    'num_pix': int(physical_area / 0.3),  # 50 pixels to cover 15 arcseconds at 0.3"/pixel
+    'ra_at_xy_0': -physical_area / 2,
+    'dec_at_xy_0': -physical_area / 2,
 })
 default_Euclid_NIR_H_image_meta = default_Euclid_VIS_image_meta.copy()
 default_Euclid_NIR_H_image_meta.update({
     'exposure_time': 87.2 * 4.0,
     'psf_fwhm': 0.542,
     'pixel_scale': 0.3,
-    'num_pix': 50,
-    'ra_at_xy_0': -50 * 0.3 / 2,
-    'dec_at_xy_0': -50 * 0.3 / 2,
+    'num_pix': int(physical_area / 0.3),  # 50 pixels to cover 15 arcseconds at 0.3"/pixel
+    'ra_at_xy_0': -physical_area / 2,
+    'dec_at_xy_0': -physical_area / 2,
 })
 
 roman_image_meta = {
-    'num_pix': 100,
+    'num_pix': int(physical_area / 0.11),  # 136 pixels to cover 15 arcseconds at 0.11"/pixel
     'pixel_scale': 0.11,    
-    'ra_at_xy_0': -100 * 0.11 / 2,  # RA at pixel (0,0) — places ra=0 at the central pixel
-    'dec_at_xy_0': -100 * 0.11 / 2,  # DEC at pixel (0,0)
+    'ra_at_xy_0': -physical_area / 2,  # RA at pixel (0,0) — places ra=0 at the central pixel
+    'dec_at_xy_0': -physical_area / 2,  # DEC at pixel (0,0)
     'exposure_time': 3 * 107.0,  # 6 exposures of 107s each
     'supersampling_factor': 3,
     'supersampling_convolution': False,
