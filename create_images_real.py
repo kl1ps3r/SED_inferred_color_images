@@ -38,14 +38,11 @@ def load_data(filepath):
         data = pkl.load(f)
     return data
 
-def augment_light(model_params, augments, source=False):
-    cosmo = FlatLambdaCDM(H0=70 * u.km / u.s / u.Mpc, Om0=0.3, Ob0=0.05)
-
-    angular_diameter_distance = cosmo.angular_diameter_distance(augments[-1])   # in kpc
+def augment_light(model_params, augments, rad, source=False, lens_rad_ratio=None, system_rotation=0.0):
 
     model_params_augmented = model_params.copy()
 
-    model_params_augmented['R_sersic'] = ((augments[0] / angular_diameter_distance.to(u.kpc).value) * u.radian).to(u.arcsec).value
+    model_params_augmented['R_sersic'] = rad
     model_params_augmented['n_sersic'] = augments[1]
 
     if not source:
@@ -56,12 +53,24 @@ def augment_light(model_params, augments, source=False):
         #model_params_augmented['center_y'] += augments[5]
         return model_params_augmented, augments[3], augments[7]
     else:
-        model_params_augmented['phi'] += augments[5]
+        model_params_augmented['phi'] += augments[5] + system_rotation
         model_params_augmented['center_x'] += augments[3]
         model_params_augmented['center_y'] += augments[4]
+
+        model_params_augmented['center_x'] = model_params_augmented['center_x'] * np.cos(system_rotation) - model_params_augmented['center_y'] * np.sin(system_rotation)
+        model_params_augmented['center_y'] = model_params_augmented['center_x'] * np.sin(system_rotation) + model_params_augmented['center_y'] * np.cos(system_rotation)
+
+        pos_rad = np.sqrt(model_params_augmented['center_x']**2 + model_params_augmented['center_y']**2)
+
+        if lens_rad_ratio is not None:
+            scaling_factor = (lens_rad_ratio) / pos_rad
+
+            model_params_augmented['center_x'] *= scaling_factor
+            model_params_augmented['center_y'] *= scaling_factor
+
         return model_params_augmented, augments[2], augments[6]
 
-def augment_lens_main(model_params, augments):
+def augment_lens_main(model_params, augments, rad):
     model_params_augmented = model_params.copy()
 
     #model_params_augmented['center_x'] += augments[3]
@@ -70,13 +79,17 @@ def augment_lens_main(model_params, augments):
     e1, e2 = q_phi_to_e(augments[2], phi + augments[6])
     model_params_augmented['e1'] = e1
     model_params_augmented['e2'] = e2
+
+    model_params_augmented['theta_E'] = rad
     return model_params_augmented
 
-def augment_lens_point(model_params, augments):
+def augment_lens_point(model_params, augments, rad):
     model_params_augmented = model_params.copy()
 
     #model_params_augmented['center_x'] += augments[3]
     #model_params_augmented['center_y'] += augments[4]
+
+    #model_params_augmented['theta_E'] *= 10**np.random.lognormal(0.0, 0.1)  # add some scatter to the subhalo Einstein radius
     return model_params_augmented
 
 def q_phi_to_e(q, phi):
@@ -356,12 +369,24 @@ def euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints
                 print(f"Processing row {j}...")
                 print(f"{'='*60}")
 
-            # Augment lens and source light model parameters
-            kwargs_params['kwargs_lens_light'][0], vis_ab_mag_deflector, redshift_deflector = augment_light(kwargs_params['kwargs_lens_light'][0], deflector_row)
-            kwargs_params['kwargs_source'][0], vis_ab_mag_source, redshift_source = augment_light(kwargs_params['kwargs_source'][0], source_row, source=True)
+            angular_diameter_distance_deflector = cosmo.angular_diameter_distance(deflector_row[-1])   # in kpc
+            angular_diameter_distance_source = cosmo.angular_diameter_distance(source_row[-1])   # in kpc
+            
+            deflector_rad = 2*((deflector_row[0] / angular_diameter_distance_deflector.to(u.kpc).value) * u.radian).to(u.arcsec).value
+            source_rad = ((source_row[0] / angular_diameter_distance_source.to(u.kpc).value) * u.radian).to(u.arcsec).value
+            
+            system_rotation = deflector_row[6]
 
-            kwargs_params['kwargs_lens'][0] = augment_lens_main(kwargs_params['kwargs_lens'][0], deflector_row)
-            kwargs_params['kwargs_lens'][1] = augment_lens_point(kwargs_params['kwargs_lens'][1], deflector_row)
+            #print(f"Deflector rad (arcsec): {deflector_rad}, Source rad (arcsec): {source_rad}")
+
+            lens_m_to_l = kwargs_params['kwargs_lens'][0]['theta_E'] / kwargs_params['kwargs_lens_light'][0]['R_sersic']
+
+            # Augment lens and source light model parameters
+            kwargs_params['kwargs_lens_light'][0], vis_ab_mag_deflector, redshift_deflector = augment_light(kwargs_params['kwargs_lens_light'][0], deflector_row, deflector_rad)
+            kwargs_params['kwargs_source'][0], vis_ab_mag_source, redshift_source = augment_light(kwargs_params['kwargs_source'][0], source_row, source_rad, source=True, lens_rad_ratio=deflector_rad/kwargs_params['kwargs_lens'][0]['theta_E'], system_rotation=system_rotation)
+
+            kwargs_params['kwargs_lens'][0] = augment_lens_main(kwargs_params['kwargs_lens'][0], deflector_row, deflector_rad)
+            kwargs_params['kwargs_lens'][1] = augment_lens_point(kwargs_params['kwargs_lens'][1], deflector_row, deflector_rad)
 
             redshift_dict = {'lens': redshift_deflector, 'source': redshift_source}
 
@@ -554,7 +579,8 @@ def euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints
             for band_index, (band_data, meta) in enumerate(zip([VIS_kwargs_data, NIR_Y_kwargs_data, NIR_J_kwargs_data, NIR_H_kwargs_data],
                                                                 [image_creator.default_Euclid_VIS_image_meta, image_creator.default_Euclid_NIR_Y_image_meta, image_creator.default_Euclid_NIR_J_image_meta, image_creator.default_Euclid_NIR_H_image_meta])):
                 poisson_noise = image_util.add_poisson(band_data['image_data'], exp_time=meta['exposure_time'])
-                #band_data['image_data'] += poisson_noise
+                if not args.dont_add_noise or not args.comparison:
+                    band_data['image_data'] += poisson_noise
 
 
             if args.verbose:

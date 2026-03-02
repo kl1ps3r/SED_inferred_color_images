@@ -25,7 +25,7 @@ distributions = {
                 [1.38, 0.62]
             ]),
         'axis_ratio': np.array([[0.7, 0.15]]),
-        'AB_magnitude': np.array([[26, 0.5]]),
+        'AB_magnitude': np.array([[23.5, 0.5]]),
         'pos_x_offset': np.array([[0.0, 0.05]]),
         'pos_y_offset': np.array([[0.0, 0.05]]),
         'angle_offset': np.array([[0.0, np.pi/16]]),
@@ -63,7 +63,7 @@ distributions = {
         'AB_magnitude': np.array([[21.0, 0.5]]),
         'pos_x_offset': np.array([[0.0, 0.1]]),
         'pos_y_offset': np.array([[0.0, 0.1]]),
-        'angle_offset': np.array([[0.0, np.pi/4]]),
+        'angle_offset': np.array([[0.0, 2*np.pi]]),
     }
 }
 
@@ -186,7 +186,7 @@ def generate_galaxy_parameters(num_galaxies, source=True, deflector=True, rng=np
                     combined_parameters[param] = np.clip(combined_parameters[param], 0.3, 8.0)
                 # Ensure effective_radius has a minimum value
                 if param == 'effective_radius':
-                    combined_parameters[param] = np.maximum(combined_parameters[param], 0.1)
+                    combined_parameters[param] = np.maximum(combined_parameters[param], 0.5)
 
         for param in same:
             if param == 'redshift':
@@ -287,6 +287,10 @@ def generate_galaxy_parameters(num_galaxies, source=True, deflector=True, rng=np
         
         for param in same:
             if param == 'redshift':
+                continue
+            if param == 'angle_offset' and deflector:
+                # Sample angle offsets uniformly between 0 and 2*pi for all redshifts
+                combined_parameters[param] = np.random.uniform(0, 2*np.pi, num_galaxies)
                 continue
             mean, std = distributions['deflector'][param][0]
             sampled_values = np.random.normal(mean, std, num_galaxies)
