@@ -1,11 +1,11 @@
 import os
 
 for i in range(1, 5):
-    num_images = 10
+    num_images = 1250
     base_class = i
     input_path = './inputs'
-    inputs_prefix = f'mass_scaling_test_{base_class}_v1'
-    output_path = './mass_scaling_test_v1'
+    inputs_prefix = f'larger_test_5000_{base_class}'
+    output_path = './output_larger_test_images_5000'
 
     os.system(f'python galaxy_parameters.py {num_images} -o {input_path}/{inputs_prefix}')
     #os.system(f'python generate_additional_galaxies_csv.py --num_images {num_images} --output_path {input_path}/{inputs_prefix}_additional.csv')

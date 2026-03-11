@@ -372,7 +372,7 @@ def euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints
             angular_diameter_distance_deflector = cosmo.angular_diameter_distance(deflector_row[-1])   # in kpc
             angular_diameter_distance_source = cosmo.angular_diameter_distance(source_row[-1])   # in kpc
             
-            deflector_rad = 2*((deflector_row[0] / angular_diameter_distance_deflector.to(u.kpc).value) * u.radian).to(u.arcsec).value
+            deflector_rad = ((deflector_row[0] / angular_diameter_distance_deflector.to(u.kpc).value) * u.radian).to(u.arcsec).value
             source_rad = ((source_row[0] / angular_diameter_distance_source.to(u.kpc).value) * u.radian).to(u.arcsec).value
             
             system_rotation = deflector_row[6]
