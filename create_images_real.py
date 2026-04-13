@@ -31,6 +31,8 @@ from datetime import datetime
 from tqdm import tqdm
 import os
 
+from pyphot.svo import get_pyphot_filter
+
 from glob import glob
 
 def load_data(filepath):
@@ -38,7 +40,7 @@ def load_data(filepath):
         data = pkl.load(f)
     return data
 
-def augment_light(model_params, augments, rad, source=False, lens_rad_ratio=None, system_rotation=0.0):
+def augment_light(model_params, augments, rad, source=False, lens_rad_ratio=None, system_rotation=0.0, old_lens_model=None, new_lens_model=None):
 
     model_params_augmented = model_params.copy()
 
@@ -60,13 +62,9 @@ def augment_light(model_params, augments, rad, source=False, lens_rad_ratio=None
         model_params_augmented['center_x'] = model_params_augmented['center_x'] * np.cos(system_rotation) - model_params_augmented['center_y'] * np.sin(system_rotation)
         model_params_augmented['center_y'] = model_params_augmented['center_x'] * np.sin(system_rotation) + model_params_augmented['center_y'] * np.cos(system_rotation)
 
-        pos_rad = np.sqrt(model_params_augmented['center_x']**2 + model_params_augmented['center_y']**2)
-
         if lens_rad_ratio is not None:
-            scaling_factor = (lens_rad_ratio) / pos_rad
-
-            model_params_augmented['center_x'] *= scaling_factor
-            model_params_augmented['center_y'] *= scaling_factor
+            model_params_augmented['center_x'] *= lens_rad_ratio
+            model_params_augmented['center_y'] *= lens_rad_ratio
 
         return model_params_augmented, augments[2], augments[6]
 
@@ -141,12 +139,14 @@ def create_image_data(kwargs_model, kwargs_params, kwargs_data, kwargs_psf, cosm
     source_model_class = LightModel(kwargs_model['source_light_model_list'], source_redshift_list=source_redshifts)
     lens_light_model_class = LightModel(kwargs_model['lens_light_model_list'])
 
-    image_model = ImageModel(data_class, psf_class, lens_model_class=lens_model_class, 
-                        source_model_class=source_model_class, lens_light_model_class=lens_light_model_class,
+    image_model = ImageModel(data_class, psf_class, 
+                        lens_model_class=lens_model_class, 
+                        source_model_class=source_model_class,
+                        lens_light_model_class=lens_light_model_class,
                         kwargs_numerics=kwargs_numerics)
     
     # generate image
-    image_model = image_model.image(kwargs_params['kwargs_lens'], kwargs_params['kwargs_source'], kwargs_lens_light=kwargs_params['kwargs_lens_light'], kwargs_ps=None)
+    image_model = image_model.image(kwargs_params['kwargs_lens'], kwargs_params['kwargs_source'], kwargs_lens_light=kwargs_params['kwargs_lens_light'], kwargs_ps=None)# ,
     #print(exp_time)
     #poisson_noise = image_util.add_poisson(image_model, exp_time=exp_time)
     #background_noise = data_class.background_rms * np.random.normal(size=image_model.shape)
@@ -226,7 +226,7 @@ def build_edge_galaxy_kwargs_by_band(edge_rows, kwargs_models, color_maker, cosm
                 z_lens=row.redshift,
                 z_source=row.redshift,
                 to_compute=['lens'],
-                convergence_factor=1e-3,
+                convergence_factor=1e-2,
             )
 
         # Calculate magnitude differences from unit amplitudes
@@ -358,7 +358,9 @@ def create_edge_galaxy_image_data(edge_light_kwargs_by_band, kwargs_model, cosmo
 
     return edge_images
 
-def euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints, edge_galaxy_df, error_log_path, deflector_row, source_row, args):
+def euclid_image_loop(color_maker, kwargs_models, kwargs_params, cosmo, zeropoints, edge_galaxy_df, error_log_path, deflector_row, source_row, args, filters):
+
+    
     # Capture warnings for this specific row
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always")
@@ -368,6 +370,8 @@ def euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints
                 print(f"\n{'='*60}")
                 print(f"Processing row {j}...")
                 print(f"{'='*60}")
+
+            #_kwargs_params = {'kwargs_lens': [{}, {}], 'kwargs_source': [{}], 'kwargs_lens_light': [{}]}
 
             angular_diameter_distance_deflector = cosmo.angular_diameter_distance(deflector_row[-1])   # in kpc
             angular_diameter_distance_source = cosmo.angular_diameter_distance(source_row[-1])   # in kpc
@@ -379,19 +383,25 @@ def euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints
 
             #print(f"Deflector rad (arcsec): {deflector_rad}, Source rad (arcsec): {source_rad}")
 
-            lens_m_to_l = kwargs_params['kwargs_lens'][0]['theta_E'] / kwargs_params['kwargs_lens_light'][0]['R_sersic']
+            #lens_m_to_l = kwargs_params['kwargs_lens'][0]['theta_E'] / kwargs_params['kwargs_lens_light'][0]['R_sersic']
 
+            lens_rad_ratio = deflector_rad / kwargs_params['kwargs_lens_light'][0]['R_sersic']
+            
             # Augment lens and source light model parameters
             kwargs_params['kwargs_lens_light'][0], vis_ab_mag_deflector, redshift_deflector = augment_light(kwargs_params['kwargs_lens_light'][0], deflector_row, deflector_rad)
-            kwargs_params['kwargs_source'][0], vis_ab_mag_source, redshift_source = augment_light(kwargs_params['kwargs_source'][0], source_row, source_rad, source=True, lens_rad_ratio=deflector_rad/kwargs_params['kwargs_lens'][0]['theta_E'], system_rotation=system_rotation)
 
             kwargs_params['kwargs_lens'][0] = augment_lens_main(kwargs_params['kwargs_lens'][0], deflector_row, deflector_rad)
             kwargs_params['kwargs_lens'][1] = augment_lens_point(kwargs_params['kwargs_lens'][1], deflector_row, deflector_rad)
 
+            kwargs_params['kwargs_source'][0], vis_ab_mag_source, redshift_source = augment_light(kwargs_params['kwargs_source'][0], source_row, source_rad, source=True,  
+                                                                                                  system_rotation=system_rotation, lens_rad_ratio=lens_rad_ratio
+                                                                                                  )
+
+
             redshift_dict = {'lens': redshift_deflector, 'source': redshift_source}
 
             # calculate amplitudes for each filter
-            color_maker = image_creator.SED_color_calculator(SED_paths, cosmology=cosmo, target_mags=redshift_dict, telescope=args.image_mode)
+            
             redshifted_SEDs = {'lens': color_maker.redshift(color_maker.SEDs['lens'], redshift_deflector),
                                 'source': color_maker.redshift(color_maker.SEDs['source'], redshift_source)}
 
@@ -481,7 +491,7 @@ def euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints
             # Therefore: sum(pixel_values) = 10^(0.4 * (ZP - m_AB))
             
             # Compute target total magnitude (lens + source) for each filter
-            total_target_mags = -2.5 * np.log10(10**(-0.4 * ab_mags[0, :]) + 10**(-0.4 * ab_mags[1, :]))
+            total_target_mags = -2.5 * np.log10(10**(-0.4 * ab_mags[0, :]) )# + 10**(-0.4 * ab_mags[1, :])
             
             # Compute what the sum of pixel values should be for each filter
             target_pixel_sums = 10 ** (0.4 * (zeropoints - total_target_mags))
@@ -592,6 +602,8 @@ def euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints
                 total_mags = -2.5 * np.log10(total_pixel_values) + zeropoints
                 print('Verified total mags after scaling:', total_mags)
 
+            nir_sums_before_reprojection = np.array([np.sum(NIR_Y_kwargs_data['image_data']), np.sum(NIR_J_kwargs_data['image_data']), np.sum(NIR_H_kwargs_data['image_data'])])
+
             # construct WCS objects for each band
             # create header object for VIS and NIR filters
 
@@ -647,8 +659,22 @@ def euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints
                 NIR_J_reprojected += noise_list[2]
                 NIR_H_reprojected += noise_list[3]
 
+            nir_sum_after_reprojection = np.array([np.sum(NIR_Y_reprojected), np.sum(NIR_J_reprojected),  np.sum(NIR_H_reprojected)])
+
             # save images and headers
-            data_list = [VIS_kwargs_data['image_data'], NIR_Y_reprojected, NIR_J_reprojected, NIR_H_reprojected]
+            data_list = [VIS_kwargs_data['image_data'], 
+                         NIR_Y_reprojected * nir_sums_before_reprojection[0] / nir_sum_after_reprojection[0], 
+                         NIR_J_reprojected * nir_sums_before_reprojection[1] / nir_sum_after_reprojection[1], 
+                         NIR_H_reprojected * nir_sums_before_reprojection[2] / nir_sum_after_reprojection[2]]
+
+            if args.verbose:
+                # Verify: calculate mags after scaling using Euclid formula
+                total_pixel_values = np.array([np.sum(data_list[0]), 
+                                            np.sum(data_list[1]),
+                                            np.sum(data_list[2]), 
+                                            np.sum(data_list[3])])
+                total_mags = -2.5 * np.log10(total_pixel_values) + zeropoints
+                print('Verified total mags after scaling:', total_mags)
 
             NIR_Y_header = VIS_header.copy()
             NIR_J_header = VIS_header.copy()
@@ -676,7 +702,7 @@ def euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints
                     for warning in caught_warnings:
                         f.write(f"[{datetime.now().isoformat()}] {warning.category.__name__}: {warning.message}\n")
 
-            return True  # indicate success
+            return True, kwargs_params  # indicate success
 
 
         except Exception as e:
@@ -688,7 +714,7 @@ def euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints
                 f.write(f'Error processing row {j}:\n')
                 f.write(error_msg)
 
-            return False  # indicate failure
+            return False, kwargs_params  # indicate failure
 
 def roman_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints, edge_galaxy_df, error_log_path, deflector_row, source_row, args):
     # Capture warnings for this specific row
@@ -1053,6 +1079,8 @@ if __name__ == "__main__":
         data = pkl.load(f)
         kwargs_params, kwargs_models, multiband_list = data['params'], data['models'], data['multiband_list']
 
+    filters = [get_pyphot_filter(filter) for filter in ['Euclid/VIS.vis', 'Euclid/NISP.Y', 'Euclid/NISP.J', 'Euclid/NISP.H']]
+
     deflector_file = f"{args.input_path}/{args.deflector_params}"
     source_file = f"{args.input_path}/{args.source_params}"
 
@@ -1071,16 +1099,25 @@ if __name__ == "__main__":
         zeropoints = np.array([0, 0, 0, 0])  # no scaling for comparison mode
     else:
         zeropoints = np.array([25.74, 29.8, 30.0, 29.9])
+
+    color_maker = image_creator.SED_color_calculator(SED_paths, cosmology=cosmo, telescope=args.image_mode, filter_throughputs=filters)
     
     successful_count = 0
     failed_count = 0
 
+    # temp
+    source_poses = []
+    deflector_radii = []
+
     for j, (deflector_row, source_row) in enumerate(tqdm(zip(deflector_augments.itertuples(index=False), source_augments.itertuples(index=False)), total=len(deflector_augments))):
         if args.image_mode == 'Euclid':
-            success = euclid_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints, edge_galaxy_df, error_log_path, deflector_row, source_row, args)
+            success, out_kwargs_params = euclid_image_loop(color_maker, kwargs_models, kwargs_params, cosmo, zeropoints, edge_galaxy_df, error_log_path, deflector_row, source_row, args, filters)
+
+            source_poses.append((out_kwargs_params['kwargs_source'][0]['center_x'], out_kwargs_params['kwargs_source'][0]['center_y']))
+            deflector_radii.append(kwargs_params['kwargs_lens'][0]['theta_E'])
 
         elif args.image_mode == 'Roman':
-            success = roman_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints, edge_galaxy_df, error_log_path, deflector_row, source_row, args)
+            success = roman_image_loop(SED_paths, kwargs_models, kwargs_params, cosmo, zeropoints, edge_galaxy_df, error_log_path, deflector_row, source_row, args, filters)
 
         if success:
             successful_count += 1
@@ -1095,3 +1132,12 @@ if __name__ == "__main__":
     if failed_count > 0:
         print(f"Error log saved to: {error_log_path}")
     print(f"{'='*60}")
+
+    source_poses = np.array(source_poses)
+    deflector_radii = np.array(deflector_radii)
+
+    plt.plot(np.sqrt(source_poses[:,0] ** 2 + source_poses[:,1] ** 2), deflector_radii, 'o')
+    plt.xlabel('Source Position')
+    plt.ylabel('Deflector Radius')
+    plt.title('Source Position vs Deflector Radius')
+    plt.show()
