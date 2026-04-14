@@ -44,7 +44,7 @@ distributions = {
         },
         
     'deflector': {
-        'redshift': np.array([[0.3, 0.9]]),
+        'redshift': np.array([[0.05, 0.9]]),
         'effective_radius': 
             np.array([
                 [7.15, 1.56],
@@ -115,20 +115,22 @@ def generate_galaxy_parameters(num_galaxies):
         source_redshift, source_redshift_counts = generate_redshift_distribution(
             batch_size, distribution='uniform', z_min=distributions['source']['redshift'][0,0], z_max=distributions['source']['redshift'][0,1])
         deflector_redshift, deflector_redshift_counts = generate_redshift_distribution(
-            batch_size, distribution='uniform', z_min=distributions['deflector']['redshift'][0,0], z_max=distributions['deflector']['redshift'][0,1])
+            batch_size, distribution='co-moving_volume', z_min=distributions['deflector']['redshift'][0,0], z_max=distributions['deflector']['redshift'][0,1])
 
         # sample intermediate deflector parameters
 
         deflector_abs_mag = schechter_lf_magnitude(redshift=deflector_redshift, M_star=distributions['deflector']['M_star'], alpha=distributions['deflector']['alpha'], m_lim=22.5, cosmology=cosmo)
         deflector_luminosity = 10**(-0.4*(deflector_abs_mag - distributions['deflector']['M_star']))
         deflector_velocity_dispersion = (deflector_luminosity)**(1/4) * distributions['deflector']['sigma_star'] * u.km / u.s
+        deflector_velocity_dispersion *= 10**rng.normal(0, 0.1, size=deflector_redshift.shape[0])
 
         # sample final deflector parameters
 
         deflector_einstein_radius = (4 * np.pi * (deflector_velocity_dispersion/c.to(u.km/u.s))**2 * cosmo.angular_diameter_distance_z1z2(deflector_redshift, source_redshift) / cosmo.angular_diameter_distance(source_redshift) * u.rad).to(u.arcsec)
         deflector_effective_radius = distributions['deflector']['Re_star'] * (deflector_luminosity)**distributions['deflector']['Re_alpha'] * (1 + deflector_redshift)**(-distributions['deflector']['Re_beta']) * u.kpc
+        deflector_effective_radius *= 10**rng.normal(0, 0.1, size=deflector_redshift.shape[0])
         deflector_apparent_mag = apparent_magnitude(deflector_abs_mag, deflector_redshift)
-        deflector_rotation_angle = rng.uniform(distributions['deflector']['angle_offset'][0,0], distributions['deflector']['angle_offset'][0,1], size=deflector_redshift.shape[0])
+        deflector_rotation_angle = rng.uniform(distributions['deflector']['angle_offset'][0,0], distributions['deflector']['angle_offset'][0,1], size=batch_size)
         
 
         # sample redshift binned deflector parameters
@@ -140,7 +142,7 @@ def generate_galaxy_parameters(num_galaxies):
 
         for z in deflector_redshift:
             match z:
-                case z if z >= 0.2 and z < 0.6:
+                case z if z >= 0.0 and z < 0.6:
                     bin_index = 0
                 case z if 0.6 <= z < 1.0:
                     bin_index = 1
@@ -200,7 +202,6 @@ def generate_galaxy_parameters(num_galaxies):
 
         # create dataframes for source and deflector parameters
         source_df = pd.DataFrame({
-            
             'effective_radius': source_effective_radius,
             'sersic_index': source_sersic,
             'AB_magnitude': source_ab_mag,
@@ -308,7 +309,7 @@ def vis_k_correction(z):
     ])
     return k_vals[0] if np.ndim(z) == 0 else k_vals
 
-def generate_redshift_distribution(num_galaxies, distribution='uniform', bins=np.array([0.2, 0.6, 1.0, 1.5, 2.0, 3.0]), rng=np.random.default_rng(), **kwargs):
+def generate_redshift_distribution(num_galaxies, distribution='uniform', bins=np.array([0.0, 0.6, 1.0, 1.5, 2.0, 3.0]), rng=np.random.default_rng(), **kwargs):
     """
     Generate a redshift distribution for a specified number of galaxies and calculates the counts given a set of redshift bins.
 
@@ -327,6 +328,20 @@ def generate_redshift_distribution(num_galaxies, distribution='uniform', bins=np
     elif distribution == 'number_density':
         # Not sure what to do
         pass
+    elif distribution == 'gamma':
+        shape = kwargs.get('shape', 3.0)
+        scale = kwargs.get('scale', 0.1)
+        redshifts = np.clip(rng.gamma(shape, scale, num_galaxies), kwargs.get('z_min', 0.05), kwargs.get('z_max', 1.0))
+    elif distribution == 'co-moving_volume':
+        z_grid = np.linspace(kwargs.get('z_min', 0.05), kwargs.get('z_max', 1.5), 10000)
+
+        dV_dz = cosmo.differential_comoving_volume(z_grid).value
+
+        pdf = dV_dz / np.sum(dV_dz)
+        cdf = np.cumsum(pdf)
+
+        uniform = np.random.rand(num_galaxies)
+        redshifts = np.interp(uniform, cdf, z_grid)
     else:
         raise ValueError("Unsupported distribution type.")
 
@@ -514,7 +529,7 @@ def plot_params(source_params, deflector_params):
 
     plt.xlim(0, 3.5)
 
-    plt.show()
+    #plt.show()
 
 if __name__ == '__main__':
     parser = ArgumentParser()
