@@ -13,11 +13,13 @@ import pandas as pd
 from skypy.galaxies.luminosity import schechter_lf_magnitude
 from astropy.cosmology import FlatLambdaCDM
 
+from matplotlib import pyplot as plt
+
 cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 
 distributions = {
     'source': {
-        'redshift': np.array([[1.2, 2.5]]),
+        'redshift': np.array([[1.0, 3.0]]),
         'effective_radius': 
             np.array([
                 [8.44, 3.28],
@@ -44,7 +46,7 @@ distributions = {
         },
         
     'deflector': {
-        'redshift': np.array([[0.05, 0.9]]),
+        'redshift': np.array([[0.05, 2.0]]),
         'effective_radius': 
             np.array([
                 [7.15, 1.56],
@@ -91,6 +93,19 @@ units = {
     'pos_y_offset': 'arcsec',
     'angle_offset': 'rad'
 }
+def sample_sigma_v(N, sigma_star=161*u.km/u.s, alpha=2.32, beta=2.67):
+    """
+    Sample velocity dispersions from a generalized gamma VDF
+    """
+    sigma = np.array([], dtype=float)
+    sigma_star_value = sigma_star.to_value(u.km / u.s)
+
+    while len(sigma) < N:
+        x = np.random.gamma(shape=alpha / beta, scale=1.0, size=N)
+        new_sigma = sigma_star_value * x**(1 / beta)
+        sigma = np.append(sigma, new_sigma[new_sigma > 10.0])
+
+    return sigma[:N] * (u.km / u.s)
 
 def generate_galaxy_parameters(num_galaxies):
 
@@ -98,7 +113,7 @@ def generate_galaxy_parameters(num_galaxies):
     Rejection sampling of parameters for  source deflector galaxy pairs given a VIS apparent magnitude cut of 22.5.
     '''
 
-    batch_size = int(num_galaxies * 10)
+    batch_size = int(num_galaxies * 6)
 
     source_keys = ['effective_radius','sersic_index','AB_magnitude','pos_x_offset','pos_y_offset','angle_offset','axis_ratio','redshift']
     deflector_keys = ['effective_radius','sersic_index','axis_ratio','AB_magnitude','pos_x_offset','pos_y_offset','angle_offset','redshift', 'einstein_radius']
@@ -109,15 +124,33 @@ def generate_galaxy_parameters(num_galaxies):
     rng = np.random.default_rng()
 
     number_remaining = num_galaxies
+    redshift_bins = np.array([0.0, 0.6, 1.0, 1.5, 2.0, 3.0])
 
     while number_remaining > 0:
-        
-        source_redshift, source_redshift_counts = generate_redshift_distribution(
-            batch_size, distribution='uniform', z_min=distributions['source']['redshift'][0,0], z_max=distributions['source']['redshift'][0,1])
-        deflector_redshift, deflector_redshift_counts = generate_redshift_distribution(
-            batch_size, distribution='co-moving_volume', z_min=distributions['deflector']['redshift'][0,0], z_max=distributions['deflector']['redshift'][0,1])
 
-        # sample intermediate deflector parameters
+        source_redshift = []
+        deflector_redshift = []
+
+        while len(source_redshift) < batch_size:
+            source_draw, _ = generate_redshift_distribution(
+                batch_size, distribution='co-moving_volume', z_min=distributions['source']['redshift'][0,0], z_max=distributions['source']['redshift'][0,1])
+            deflector_draw, _ = generate_redshift_distribution(
+                batch_size, distribution='co-moving_volume', z_min=distributions['deflector']['redshift'][0,0], z_max=distributions['deflector']['redshift'][0,1])
+
+            valid_redshifts = source_draw >= deflector_draw
+            source_redshift.extend(source_draw[valid_redshifts].tolist())
+            deflector_redshift.extend(deflector_draw[valid_redshifts].tolist())
+
+        source_redshift = np.array(source_redshift[:batch_size])
+        deflector_redshift = np.array(deflector_redshift[:batch_size])
+
+        source_redshift_counts, _ = np.histogram(source_redshift, bins=redshift_bins)
+        deflector_redshift_counts, _ = np.histogram(deflector_redshift, bins=redshift_bins)
+
+        if True:
+            print('Created redshifts for batch, sampling other parameters...')
+
+        '''# sample intermediate deflector parameters
 
         deflector_abs_mag = schechter_lf_magnitude(redshift=deflector_redshift, M_star=distributions['deflector']['M_star'], alpha=distributions['deflector']['alpha'], m_lim=22.5, cosmology=cosmo)
         deflector_luminosity = 10**(-0.4*(deflector_abs_mag - distributions['deflector']['M_star']))
@@ -129,7 +162,29 @@ def generate_galaxy_parameters(num_galaxies):
         deflector_einstein_radius = (4 * np.pi * (deflector_velocity_dispersion/c.to(u.km/u.s))**2 * cosmo.angular_diameter_distance_z1z2(deflector_redshift, source_redshift) / cosmo.angular_diameter_distance(source_redshift) * u.rad).to(u.arcsec)
         deflector_effective_radius = distributions['deflector']['Re_star'] * (deflector_luminosity)**distributions['deflector']['Re_alpha'] * (1 + deflector_redshift)**(-distributions['deflector']['Re_beta']) * u.kpc
         deflector_effective_radius *= 10**rng.normal(0, 0.1, size=deflector_redshift.shape[0])
-        deflector_apparent_mag = apparent_magnitude(deflector_abs_mag, deflector_redshift)
+        deflector_apparent_mag = apparent_magnitude(deflector_abs_mag, deflector_redshift)'''
+        
+        deflector_velocity_dispersion = sample_sigma_v(deflector_redshift.shape[0])
+        deflector_einstein_radius = (4 * np.pi * (deflector_velocity_dispersion/c.to(u.km/u.s))**2 * cosmo.angular_diameter_distance_z1z2(deflector_redshift, source_redshift) / cosmo.angular_diameter_distance(source_redshift) * u.rad).to(u.arcsec)
+
+        '''plt.hist(deflector_velocity_dispersion.value, bins=20)
+        plt.show()'''
+        V=np.log10(deflector_velocity_dispersion.value)
+        #print(np.min(V), np.max(V))
+        M=(-0.37+(0.37**2-(4*(0.006)*(2.97+V)))**0.5)/(2*0.006)
+       
+        #M+=rng.normal(len(M))*(0.15/2.4)
+        #print(np.min(M), np.mean(deflector_velocity_dispersion.value))
+        
+        R=2.46-2.79*V+0.84*V**2
+        #R+=rng.normal(len(R))*(0.11)
+
+        #convert to observed r band size;
+        deflector_effective_radius = 10**R *u.kpc
+        deflector_apparent_mag = M + 5 * np.log10(cosmo.luminosity_distance(deflector_redshift).to(u.pc).value) - 5 + 2.5*np.log10(2) + vis_k_correction(deflector_redshift)
+
+        #deflector_effective_radius = distributions['deflector']['Re_star'] * (10**(-0.4*(M - distributions['deflector']['M_star'])))**distributions['deflector']['Re_alpha'] * (1 + deflector_redshift)**(-distributions['deflector']['Re_beta']) * u.kpc
+
         deflector_rotation_angle = rng.uniform(distributions['deflector']['angle_offset'][0,0], distributions['deflector']['angle_offset'][0,1], size=batch_size)
         
 
@@ -180,7 +235,7 @@ def generate_galaxy_parameters(num_galaxies):
 
         for z in source_redshift:
             match z:
-                case z if z >= 0.2 and z < 0.6:
+                case z if z >= 0.0 and z < 0.6:
                     bin_index = 0
                 case z if 0.6 <= z < 1.0:
                     bin_index = 1
@@ -224,35 +279,29 @@ def generate_galaxy_parameters(num_galaxies):
             'einstein_radius': deflector_einstein_radius.value
         })
 
-        # create mask for source-deflector pairs that satisfy the apparent magnitude cut
-
         detect = deflector_apparent_mag < 22.5
         strong = deflector_einstein_radius.value > 0.5
 
-        mask = detect & strong
+        #print(np.sum(detect), np.sum(strong))
 
-        weights = deflector_einstein_radius.value**2
+        '''weights = deflector_einstein_radius**2
 
-        # optional detectability term
-        weights *= 10**(-0.4 * (deflector_apparent_mag - 22.5))
+        weights = weights / np.max(weights)
 
-        # normalise safely
-        p_acc = weights / weights.max()
+        p_acc = rng.uniform(0, 1, size=deflector_redshift.shape[0])'''
 
-        # 4. rejection step
-        random_draws = np.random.rand(batch_size)
-        accepted = mask & (random_draws < p_acc)
+        mask = detect & strong #& (p_acc < weights)
 
         # apply mask to source and deflector dataframes
-        source_df = source_df.loc[accepted].copy()
-        deflector_df = deflector_df.loc[accepted].copy()
+        source_df = source_df.loc[mask].copy()
+        deflector_df = deflector_df.loc[mask].copy()
 
         # append accepted pairs to the running parameter tables
         source_parameters = pd.concat([source_parameters, source_df], ignore_index=True)
         deflector_parameters = pd.concat([deflector_parameters, deflector_df], ignore_index=True)
 
         number_remaining = num_galaxies - deflector_parameters.shape[0]
-        print(number_remaining)
+        #print(number_remaining)
         
     source_parameters = source_parameters.head(num_galaxies)
     deflector_parameters = deflector_parameters.head(num_galaxies)

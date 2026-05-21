@@ -1136,8 +1136,9 @@ if __name__ == "__main__":
     source_poses = np.array(source_poses)
     deflector_radii = np.array(deflector_radii)
 
-    plt.plot(np.sqrt(source_poses[:,0] ** 2 + source_poses[:,1] ** 2), deflector_radii, 'o')
+    '''plt.plot(np.sqrt(source_poses[:,0] ** 2 + source_poses[:,1] ** 2), deflector_radii, 'o')
     plt.xlabel('Source Position')
     plt.ylabel('Deflector Radius')
     plt.title('Source Position vs Deflector Radius')
     plt.show()
+'''

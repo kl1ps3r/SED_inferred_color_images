@@ -232,3 +232,6 @@ large_test*/
 inputs/
 roman*/
 mass_scaling_test*/
+csv_files/
+images/
+model_run_16_VIS_cutouts/
