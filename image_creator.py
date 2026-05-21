@@ -18,6 +18,8 @@ import lenstronomy.Util.image_util as image_util
 from matplotlib import pyplot as plt
 from astropy.io import fits
 
+import pyphot
+
 import os
 
 class SED_color_calculator:
@@ -32,13 +34,21 @@ class SED_color_calculator:
             from astropy.cosmology import FlatLambdaCDM
             
             self.cosmology = FlatLambdaCDM(H0=70 * u.km / u.s / u.Mpc, Om0=0.3, Ob0=0.05)
+        
+        self.telescope = kwargs.get('telescope', 'Euclid')
 
-        if 'filter_throughputs' in kwargs:
-            self.filter_throughputs = kwargs['filter_throughputs']
-            self.initialise_filter_image_meta_dicts(kwargs['filter_throughputs'].keys())
-        else:
-            self.load_filters_throughputs('Euclid', **kwargs)
-            self.initialise_filter_image_meta_dicts('Euclid')
+        if self.telescope == 'Euclid':
+            self.filter_names = ['VIS', 'NIR_Y', 'NIR_J', 'NIR_H']
+        elif self.telescope == 'Roman':
+            self.filter_names = ['VIS', 'F106', 'F129', 'F158']
+
+
+        self.filter_throughputs = kwargs.get('filter_throughputs', None)
+        if self.filter_throughputs is None:
+            self.load_filters_throughputs(self.telescope, verbose=kwargs.get('verbose', False))
+        self.initialise_filter_image_meta_dicts(self.telescope)
+
+        
 
     def load_SEDs(self, SED_paths):
         self.SEDs = {}
@@ -53,27 +63,40 @@ class SED_color_calculator:
             raise IOError(f"Error loading SED from {path}: \n{e}")
         
     def load_filters_throughputs(self, filter_names, **kwargs):
+        verbose = kwargs.get('verbose', False)
         if filter_names == 'Euclid':
-            verbose = kwargs.get('verbose', False)
+            
             if verbose:
                 print("Loading Euclid filter throughputs...")
 
-            import photometry
-            pbs = [{'file': 'VIS.Euclid.pb', 'outCol': 'TU_Fnu_VIS', 'band': None, 'name': 'VIS'},
-                {'file': 'Y_NISP.Euclid.pb', 'outCol': 'TU_Fnu_NIR_Y', 'band': None, 'name': 'NIR_Y'},
-                {'file': 'J_NISP.Euclid.pb', 'outCol': 'TU_Fnu_NIR_J', 'band': None, 'name': 'NIR_J'},
-                {'file': 'H_NISP.Euclid.pb', 'outCol': 'TU_Fnu_NIR_H', 'band': None, 'name': 'NIR_H'}]
+            from pyphot.svo import get_pyphot_filter
+            filter_list = ['Euclid/VIS.vis', 'Euclid/NISP.Y', 'Euclid/NISP.J', 'Euclid/NISP.H']
+            self.filter_throughputs = [get_pyphot_filter(filter) for filter in filter_list]
 
-            for pb in pbs:
-                pb['band'] = photometry.Passband(file=pb['file'])
+        elif filter_names == 'Roman':
+            # Use pyphot SVO filters for VIS and CSV files for Roman NIR filters.
+            if verbose:
+                print("Loading Roman filter throughputs (VIS via pyphot, NIR from ./Roman_filters/)...")
 
-            temp = [np.array([pb['band'].lam(unit=u.Angstrom).value, pb['band'].y]) for pb in pbs]
+            from pyphot.svo import get_pyphot_filter
 
-            Euclid_VIS_mask = 3450. < temp[0][0]
+            # VIS from pyphot
+            vis_pb = get_pyphot_filter('Euclid/VIS.vis')
+            vis_arr = np.array([vis_pb.lam(unit=u.AA).value, vis_pb.y])
 
-            self.filter_throughputs = [np.array([temp[0][0][Euclid_VIS_mask], temp[0][1][Euclid_VIS_mask]])]
-            for filter in temp[1:]:
-                self.filter_throughputs.append(filter)
+            # Roman NIR filters from local CSVs (expected in microns -> convert to Angstrom)
+            filter_files = sorted([f for f in os.listdir('./Roman_filters/') if f.endswith('.csv')])
+            roman_filters = []
+            for filter_file in filter_files:
+                data = np.loadtxt(os.path.join('./Roman_filters/', filter_file), delimiter=',', skiprows=1, unpack=True)
+                data[0] *= 1e4  # convert from microns to Angstrom
+                roman_filters.append(data)
+
+            # Combine VIS + Roman NIR filters (VIS first)
+            self.filter_throughputs = [vis_arr] + roman_filters
+
+        else:
+            raise NotImplementedError("Only 'Euclid' and 'Roman' filter throughputs are currently implemented.")
 
     def initialise_filter_image_meta_dicts(self, filter_names):
         self.kwargs_data = {}
@@ -81,10 +104,19 @@ class SED_color_calculator:
         self.kwargs_numerics = {}
 
         if filter_names == 'Euclid':
-            for filter in ['VIS', 'NIR_Y', 'NIR_J', 'NIR_H']:
+            for filter in self.filter_names:
                 self.kwargs_data[filter], self.kwargs_psf[filter], self.kwargs_numerics[filter] = self.meta_to_dicts(globals()[f'default_Euclid_{filter}_image_meta'])
+        
+        elif filter_names == 'Roman':
+            for filter in self.filter_names:
+                if filter == 'VIS':
+                    meta = globals()[f'default_Euclid_VIS_image_meta']
+                else:
+                    meta = globals()[f'roman_image_meta']
+                meta['filter_name'] = filter
+                self.kwargs_data[filter], self.kwargs_psf[filter], self.kwargs_numerics[filter] = self.meta_to_dicts(meta)
         else:
-            raise NotImplementedError("Only 'Euclid' filter image meta dicts is currently implemented.")
+            raise NotImplementedError("Only 'Euclid' and 'Roman' filter image meta dicts are currently implemented.")
 
     def get_amplitudes(self, target_AB_mags, kwargs_model, kwarg_params, redshifts:dict, **kwargs):
 
@@ -134,14 +166,15 @@ class SED_color_calculator:
         _kwarg_params['kwargs_source'][0]['amp'] = 1.0
         
         # calculate ratios
+
         deflector_unit_flux = self.compute_flux(_kwarg_params,
-                                          kwargs_model,
-                                          self.kwargs_data['VIS'],
-                                          self.kwargs_psf['VIS'],
-                                          self.kwargs_numerics['VIS'],
-                                          to_compute=['lens'],
-                                          convergence_factor=1e-2,
-                                          **kwargs)
+                                        kwargs_model,
+                                        self.kwargs_data['VIS'],
+                                        self.kwargs_psf['VIS'],
+                                        self.kwargs_numerics['VIS'],
+                                        to_compute=['lens'],
+                                        convergence_factor=1e-2,
+                                        **kwargs)
         source_unit_flux = self.compute_flux(_kwarg_params,
                                         kwargs_model,
                                         self.kwargs_data['VIS'],
@@ -151,7 +184,9 @@ class SED_color_calculator:
                                         lens_image=True,
                                         convergence_factor=1e-2,
                                         **kwargs)
-        
+        if verbose:
+            print(target_AB_mags['lens'], target_AB_mags['source'], '\n', deflector_unit_flux, source_unit_flux)
+
         # Check for zero or invalid flux values
         if deflector_unit_flux <= 0 or not np.isfinite(deflector_unit_flux):
             error_msg = f"Invalid deflector flux: {deflector_unit_flux}. "
@@ -165,7 +200,11 @@ class SED_color_calculator:
             error_msg += f"Source params: R_sersic={_kwarg_params['kwargs_source'][0]['R_sersic']:.3f}, "
             error_msg += f"n_sersic={_kwarg_params['kwargs_source'][0]['n_sersic']:.3f}, "
             error_msg += f"amp={_kwarg_params['kwargs_source'][0]['amp']:.3e}"
+            error_msg += f"position relative to lens: x={_kwarg_params['kwargs_source'][0]['center_x']:.3f}, y={_kwarg_params['kwargs_source'][0]['center_y']:.3f}"
             raise ValueError(error_msg)
+            
+        deflector_unit_flux = np.array(deflector_unit_flux)
+        source_unit_flux = np.array(source_unit_flux)
         
         if verbose:
             print(deflector_unit_flux, source_unit_flux, '\n', weighted_mean_fluxes)
@@ -355,8 +394,8 @@ class SED_color_calculator:
         redshifted_SED = np.array([redshifted_wavelength, redshifted_flux])
         return redshifted_SED
 
-    @staticmethod
-    def get_weighted_mean_flux(SED, filter_throughput, interp_method=np.interp, integrate_method=None):
+    
+    def get_weighted_mean_flux(self, SED, filter_throughput, interp_method=np.interp, integrate_method=None):
         '''
         Calculate the weighted mean flux of the SED through the filter throughput.
         Parameters:
@@ -370,27 +409,30 @@ class SED_color_calculator:
         mean_flux : float
             Weighted mean flux.
         '''
-        if integrate_method is None:
-            from scipy.integrate import trapezoid
-            integrate_method = trapezoid
+        if self.telescope == 'Euclid':
+            mean_flux = filter_throughput.get_flux(SED[0]*u.AA, SED[1]*u.erg/u.s/u.cm**2/u.AA).value
+        else:
+            if integrate_method is None:
+                from scipy.integrate import trapezoid
+                integrate_method = trapezoid
 
-        #plot(SED, filter_throughput)
+            #plot(SED, filter_throughput)
 
-        # Ensure filter wavelengths are strictly increasing
-        if not np.all(np.diff(filter_throughput[0]) > 0):
-            raise ValueError("Filter wavelengths must be strictly increasing.")
+            # Ensure filter wavelengths are strictly increasing
+            if not np.all(np.diff(filter_throughput[0]) > 0):
+                raise ValueError("Filter wavelengths must be strictly increasing.")
 
-        # Interpolate filter throughput to SED wavelengths
-        interp_filter = interp_method(SED[0], filter_throughput[0], filter_throughput[1], left=0, right=0)
+            # Interpolate filter throughput to SED wavelengths
+            interp_filter = interp_method(SED[0], filter_throughput[0], filter_throughput[1], left=0, right=0)
 
-        # Calculate weighted mean flux
-        numerator = integrate_method(SED[1] * interp_filter * SED[0], SED[0])
-        denominator = integrate_method(interp_filter * SED[0], SED[0])
+            # Calculate weighted mean flux
+            numerator = integrate_method(SED[1] * interp_filter * SED[0], SED[0])
+            denominator = integrate_method(interp_filter * SED[0], SED[0])
 
-        if denominator == 0.0:
-            raise ValueError("Denominator for mean flux calculation is zero.")
+            if denominator == 0.0:
+                raise ValueError("Denominator for mean flux calculation is zero.")
 
-        mean_flux = numerator / denominator
+            mean_flux = numerator / denominator
         return mean_flux
 
     def get_ab_magnitude(self, SED, filter_throughput, interp_method=np.interp, integrate_method=None):
@@ -407,22 +449,24 @@ class SED_color_calculator:
         ab_magnitude : float
             AB magnitude.
         '''
+        if self.telescope == 'Euclid':
+            ab_magnitude = -2.5 * np.log10(filter_throughput.get_flux(SED[0]*u.AA, SED[1]*u.erg/u.s/u.cm**2/u.AA).value) - filter_throughput.AB_zero_mag
+        else:
+            if integrate_method is None:
+                from scipy.integrate import trapezoid
+                integrate_method = trapezoid
 
-        if integrate_method is None:
-            from scipy.integrate import trapezoid
-            integrate_method = trapezoid
+            mean_flux = self.get_weighted_mean_flux(SED, filter_throughput, interp_method, integrate_method)
 
-        mean_flux = self.get_weighted_mean_flux(SED, filter_throughput, interp_method, integrate_method)
+            if mean_flux <= 0:
+                return np.inf  # Return infinity for non-positive fluxes
 
-        if mean_flux <= 0:
-            return np.inf  # Return infinity for non-positive fluxes
+            # Convert f_lambda to f_nu
+            effective_wavelength = integrate_method(filter_throughput[0] * filter_throughput[1], filter_throughput[0]) / integrate_method(filter_throughput[1] / filter_throughput[0], filter_throughput[0])
+            f_nu = mean_flux * (effective_wavelength) / c.to(u.Angstrom / u.s).value  # in erg/s/cm^2/Hz
 
-        # Convert f_lambda to f_nu
-        effective_wavelength = integrate_method(filter_throughput[0] * filter_throughput[1], filter_throughput[0]) / integrate_method(filter_throughput[1], filter_throughput[0])
-        f_nu = mean_flux * (effective_wavelength ** 2) / c.to(u.Angstrom / u.s).value  # in erg/s/cm^2/Hz
-
-        # Calculate AB magnitude
-        ab_magnitude = -2.5 * np.log10(f_nu) - 48.6
+            # Calculate AB magnitude
+            ab_magnitude = -2.5 * np.log10(f_nu) - 48.6
         return ab_magnitude
 
     @staticmethod
@@ -438,7 +482,7 @@ class SED_color_calculator:
                         verbose=False,
                         num_pixes=None,
                         lens_image=True,
-                        convergence_factor=1e-5,
+                        convergence_factor=1e-3,
                         num_pix_step=10,
                         meta=None,
                         **kwargs):
@@ -472,10 +516,15 @@ class SED_color_calculator:
         num_pix = 100
         
         iteration = 0
-
+        #print(_kwargs_data)
         while np.abs(flux_diff) > convergence_factor * total_flux or iteration == 0:
+            # temp
+            #lens_image = True
+
             previous_flux = total_flux
             _kwargs_data['image_data'] = np.zeros((num_pix, num_pix))
+            _kwargs_data['dec_at_xy_0'] = -num_pix // 2 * _kwargs_data['transform_pix2angle'][0, 0]
+            _kwargs_data['ra_at_xy_0'] = -num_pix // 2 * _kwargs_data['transform_pix2angle'][1, 1]
 
             data_class = ImageData(**_kwargs_data)
 
@@ -489,8 +538,27 @@ class SED_color_calculator:
                 img = image_model.image(kwargs_lens=None, kwargs_lens_light=kwargs_params['kwargs_lens_light'])
 
             elif 'source' in to_compute:
-                image_model = ImageModel(data_class, psf_model_class, source_model_class=light_models['source'], kwargs_numerics=kwargs_numerics)
+                #lens_image = False
+                #print(lens_image)
+                image_model = ImageModel(data_class, psf_model_class, source_model_class=light_models['source'], lens_model_class=lens_model_class if lens_image else None, kwargs_numerics=kwargs_numerics)
                 img = image_model.image(kwargs_lens=kwargs_params['kwargs_lens'] if lens_image else None, kwargs_source=kwargs_params['kwargs_source'])
+                #print(f"Lensed: {lens_image}, Sum: {np.sum(img)}")
+                
+                '''lens_image = not lens_image
+                image_model = ImageModel(data_class, psf_model_class, source_model_class=light_models['source'], lens_model_class=lens_model_class if lens_image else None, kwargs_numerics=kwargs_numerics)
+                img_2 = image_model.image(kwargs_lens=kwargs_params['kwargs_lens'] if lens_image else None, kwargs_source=kwargs_params['kwargs_source'])
+                print(f"Lensed: {lens_image}, Sum: {np.sum(img_2)}")'''
+
+                '''fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+                im1 = axes[0].imshow(np.log10(img), origin='lower', cmap='viridis')
+                axes[0].set_title('Source with lensing')
+                plt.colorbar(im1, ax=axes[0])
+                im2 = axes[1].imshow(np.log10(img_2), origin='lower', cmap='viridis')
+                axes[1].set_title('Source without lensing')
+                plt.colorbar(im2, ax=axes[1])
+                plt.tight_layout()
+                plt.show()'''
+
             else:
                 raise ValueError("to_compute must contain at least 'lens' or 'source'.")
 
@@ -537,7 +605,7 @@ class SED_color_calculator:
         return total_flux * kwargs_data['transform_pix2angle'][0,0]**2  # scale by pixel area
 
     @staticmethod
-    def meta_to_dicts(image_meta):
+    def meta_to_dicts(image_meta, **kwargs):
         '''
         Convert image metadata to LENSTRONOMY kwargs dictionaries for data, psf, and numerics.
         Parameters:
@@ -562,12 +630,23 @@ class SED_color_calculator:
             'dec_at_xy_0': image_meta['dec_at_xy_0'],
             'exposure_time': image_meta['exposure_time']
         }
+        if 'psf_fwhm' in image_meta:
+            kwargs_psf = {
+                'psf_type': 'GAUSSIAN',
+                'fwhm': image_meta['psf_fwhm'],
+                'pixel_size': image_meta['pixel_scale']
+            }
+        else:
+            filter_name = image_meta.get('filter_name', None)
+            if filter_name is None:
+                raise ValueError("If 'psf_fwhm' is not provided in image_meta, 'filter_name' must be provided to determine PSF.")
 
-        kwargs_psf = {
-            'psf_type': 'GAUSSIAN',
-            'fwhm': image_meta['psf_fwhm'],
-            'pixel_size': image_meta['pixel_scale']
-        }
+            psf_data = load_psf_roman(filter_name)
+            kwargs_psf = {
+                'psf_type': 'PIXEL',
+                'kernel_point_source': psf_data,
+                'kernel_point_source_init': psf_data 
+            }
 
         kwargs_numerics = {
             'supersampling_factor': image_meta['supersampling_factor'],
@@ -793,13 +872,32 @@ def save_to_fits(data_list, header_list, filter_names, output_filename):
     os.makedirs(os.path.dirname(output_filename), exist_ok=True)
     hdu_list.writeto(output_filename, overwrite=True)
 
+def load_psf_roman(filter_name):
+    filter_to_psf_file = {
+        'F106': './roman_psfs/psf_F106.fits',
+        'F129': './roman_psfs/psf_F129.fits',
+        'F158': './roman_psfs/psf_F158.fits'
+    }
+    if filter_name not in filter_to_psf_file:
+        raise ValueError(f"Filter name '{filter_name}' not recognized. Valid options are: {list(filter_to_psf_file.keys())}")
+    
+    psf_file = filter_to_psf_file[filter_name]
+    try:
+        with fits.open(psf_file) as hdul:
+            psf_data = hdul[0].data
+            return psf_data
+    except Exception as e:
+        raise IOError(f"Error loading PSF from {psf_file}: \n{e}")
+
+physical_area = 15
+
 default_Euclid_VIS_image_meta = {
-    'num_pix': 150,
+    'num_pix': int(physical_area / 0.1),  # 150 pixels to cover 15 arcseconds at 0.1"/pixel
     'pixel_scale': 0.1,  
     'psf_fwhm': 0.203,  
     'background_rms': 0.1, 
-    'ra_at_xy_0': 0.0,  
-    'dec_at_xy_0': 0.0,  
+    'ra_at_xy_0': -physical_area / 2,  # RA at pixel (0,0) — places ra=0 at the central pixel
+    'dec_at_xy_0': -physical_area / 2,  # DEC at pixel (0,0)
     'exposure_time': 2422.0,
     'supersampling_factor': 3,
     'supersampling_convolution': False
@@ -809,22 +907,39 @@ default_Euclid_NIR_Y_image_meta.update({
     'exposure_time': 87.2 * 4.0,
     'psf_fwhm': 0.475,
     'pixel_scale': 0.3,
-    'num_pix': 50,
+    'num_pix': int(physical_area / 0.3),  # 50 pixels to cover 15 arcseconds at 0.3"/pixel
+    'ra_at_xy_0': -physical_area / 2,
+    'dec_at_xy_0': -physical_area / 2,
 })
 default_Euclid_NIR_J_image_meta = default_Euclid_VIS_image_meta.copy()
 default_Euclid_NIR_J_image_meta.update({
     'exposure_time': 87.2 * 4.0,
     'psf_fwhm': 0.504,
     'pixel_scale': 0.3,
-    'num_pix': 50,
+    'num_pix': int(physical_area / 0.3),  # 50 pixels to cover 15 arcseconds at 0.3"/pixel
+    'ra_at_xy_0': -physical_area / 2,
+    'dec_at_xy_0': -physical_area / 2,
 })
 default_Euclid_NIR_H_image_meta = default_Euclid_VIS_image_meta.copy()
 default_Euclid_NIR_H_image_meta.update({
     'exposure_time': 87.2 * 4.0,
     'psf_fwhm': 0.542,
     'pixel_scale': 0.3,
-    'num_pix': 50,
+    'num_pix': int(physical_area / 0.3),  # 50 pixels to cover 15 arcseconds at 0.3"/pixel
+    'ra_at_xy_0': -physical_area / 2,
+    'dec_at_xy_0': -physical_area / 2,
 })
+
+roman_image_meta = {
+    'num_pix': int(physical_area / 0.11),  # 136 pixels to cover 15 arcseconds at 0.11"/pixel
+    'pixel_scale': 0.11,    
+    'ra_at_xy_0': -physical_area / 2,  # RA at pixel (0,0) — places ra=0 at the central pixel
+    'dec_at_xy_0': -physical_area / 2,  # DEC at pixel (0,0)
+    'exposure_time': 3 * 107.0,  # 6 exposures of 107s each
+    'supersampling_factor': 3,
+    'supersampling_convolution': False,
+    'background_rms': 0.1,  # Placeholder value; should be set based on expected noise characteristics
+}
 
 def plot(SED, filter_throughput):
     fig, ax1 = plt.subplots(figsize=(10, 4))

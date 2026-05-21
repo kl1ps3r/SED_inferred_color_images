@@ -221,6 +221,7 @@ __marimo__/
 *.gz
 *.csv
 *.png
+*.zip
 z_dist/
 SEDs/
 test*/
@@ -228,3 +229,14 @@ main*/
 opt*/
 plots/
 large_test*/
+*output*/
+roman*/
+mass_scaling_test*/
+csv_files/
+images/
+model_run_16_VIS_cutouts/
+!inputs/
+!inputs/SEDs/
+!inputs/base_class/
+!inputs/SEDs/**
+!inputs/base_class/**

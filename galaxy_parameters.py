@@ -3,6 +3,9 @@ import numpy as np
 import glob
 from argparse import ArgumentParser
 
+from astropy import units as u
+from astropy.constants import c
+
 distributions = {
     'source': {
         'redshift': np.array([[1.2, 2.5]]),
@@ -25,14 +28,14 @@ distributions = {
                 [1.38, 0.62]
             ]),
         'axis_ratio': np.array([[0.7, 0.15]]),
-        'AB_magnitude': np.array([[26, 0.5]]),
+        'AB_magnitude': np.array([[23.5, 0.25]]),
         'pos_x_offset': np.array([[0.0, 0.05]]),
         'pos_y_offset': np.array([[0.0, 0.05]]),
-        'angle_offset': np.array([[0.0, np.pi/16]]),
+        'angle_offset': np.array([[0.0, np.pi/32]]),
         },
         
     'deflector': {
-        'redshift': np.array([[0.3, 0.7]]),
+        'redshift': np.array([[0.3, 0.9]]),
         'effective_radius': 
             np.array([
                 [7.15, 1.56],
@@ -63,7 +66,7 @@ distributions = {
         'AB_magnitude': np.array([[21.0, 0.5]]),
         'pos_x_offset': np.array([[0.0, 0.1]]),
         'pos_y_offset': np.array([[0.0, 0.1]]),
-        'angle_offset': np.array([[0.0, np.pi/4]]),
+        'angle_offset': np.array([[0.0, 2*np.pi]]),
     }
 }
 
@@ -186,7 +189,7 @@ def generate_galaxy_parameters(num_galaxies, source=True, deflector=True, rng=np
                     combined_parameters[param] = np.clip(combined_parameters[param], 0.3, 8.0)
                 # Ensure effective_radius has a minimum value
                 if param == 'effective_radius':
-                    combined_parameters[param] = np.maximum(combined_parameters[param], 0.1)
+                    combined_parameters[param] = np.maximum(combined_parameters[param], 0.5)
 
         for param in same:
             if param == 'redshift':
@@ -199,13 +202,15 @@ def generate_galaxy_parameters(num_galaxies, source=True, deflector=True, rng=np
                 sampled_values = np.abs(sampled_values)
                 # Clamp axis_ratio to valid range [0, 1]
                 if param == 'axis_ratio':
-                    sampled_values = np.clip(sampled_values, 0.1, 1.0)
+                    sampled_values = np.clip(sampled_values, 0.4, 0.98)
                 # Clamp sersic_index to reasonable range
                 if param == 'sersic_index':
                     sampled_values = np.clip(sampled_values, 0.3, 8.0)
                 # Ensure effective_radius has a minimum value
                 if param == 'effective_radius':
                     sampled_values = np.maximum(sampled_values, 0.1)
+                if param == 'pos_x_offset' or param == 'pos_y_offset':
+                    sampled_values = np.clip(sampled_values, 3*-std, 3*std)
             
             combined_parameters[param] = sampled_values
         combined_parameters['redshift'] = redshifts
@@ -280,14 +285,23 @@ def generate_galaxy_parameters(num_galaxies, source=True, deflector=True, rng=np
                     combined_parameters[param] = np.clip(combined_parameters[param], 0.1, 1.0)
                 # Clamp sersic_index to reasonable range
                 if param == 'sersic_index':
-                    combined_parameters[param] = np.clip(combined_parameters[param], 0.3, 8.0)
+                    combined_parameters[param] = np.clip(combined_parameters[param], 0.5, 8.0)
                 # Ensure effective_radius has a minimum value
                 if param == 'effective_radius':
-                    combined_parameters[param] = np.maximum(combined_parameters[param], 0.1)
+                    combined_parameters[param] = np.maximum(combined_parameters[param], 1.0)
         
         for param in same:
             if param == 'redshift':
                 continue
+            if param == 'angle_offset' and deflector:
+                # Sample angle offsets uniformly between 0 and 2*pi for all redshifts
+                combined_parameters[param] = np.random.uniform(0, 2*np.pi, num_galaxies)
+                continue
+
+            if param == 'AB_magnitude' and deflector:
+                combined_parameters[param] = deflector_magnitudes(redshifts)
+                continue
+
             mean, std = distributions['deflector'][param][0]
             sampled_values = np.random.normal(mean, std, num_galaxies)
             
@@ -299,10 +313,10 @@ def generate_galaxy_parameters(num_galaxies, source=True, deflector=True, rng=np
                     sampled_values = np.clip(sampled_values, 0.1, 1.0)
                 # Clamp sersic_index to reasonable range
                 if param == 'sersic_index':
-                    sampled_values = np.clip(sampled_values, 0.3, 8.0)
+                    sampled_values = np.clip(sampled_values, 0.5, 8.0)
                 # Ensure effective_radius has a minimum value
                 if param == 'effective_radius':
-                    sampled_values = np.maximum(sampled_values, 0.1)
+                    sampled_values = np.maximum(sampled_values, 1.0)
             
             combined_parameters[param] = sampled_values
         combined_parameters['redshift'] = redshifts
@@ -315,6 +329,80 @@ def generate_galaxy_parameters(num_galaxies, source=True, deflector=True, rng=np
         output_parameters['deflector'] = combined_parameters
 
     return output_parameters
+
+def deflector_magnitudes(redshifts):
+    from astropy.cosmology import FlatLambdaCDM
+    cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
+
+    def sample_schechter_mag(num_samples=1, alpha=0.5, M_star=-21):
+        k=alpha+1
+
+        x = np.random.gamma(k, 1, num_samples)
+
+        return M_star - 2.5*np.log10(x)
+    
+    # Calculate Distance modulus for each redshift from the Luminosity Distance
+    DL = cosmo.luminosity_distance(redshifts).value  # in Mpc
+    mus = 5*np.log10(DL*1e6) - 5
+
+    # Estimate the K-correction for an elliptical galaxy in the VIS band
+    K_correction = vis_K_correction(redshifts)
+
+    # Sample aparent magnitudes from the Schechter function
+    aparent_magnitude = []
+
+    for k_corr, mu_value in zip(K_correction, mus):
+        M_value = 100
+        while M_value + k_corr + mu_value > 22.5:
+            M_value = sample_schechter_mag()[0]
+
+        aparent_magnitude.append(M_value + k_corr + mu_value)
+
+    return np.array(aparent_magnitude)
+    
+def vis_K_correction(z):
+    from scipy.integrate import trapezoid
+    import photometry
+
+    def redshift_sed(SED, z):
+        return np.array([SED[0] * (1 + z), SED[1] / (1 + z)])
+
+    def get_weighted_mean_flux(SED, filter_throughput):
+        
+
+        interp_filter = np.interp(
+            SED[0],
+            filter_throughput[0],
+            filter_throughput[1],
+            left=0.0,
+            right=0.0,
+        )
+        numerator = trapezoid(SED[1] * interp_filter * SED[0], SED[0])
+        denominator = trapezoid(interp_filter * SED[0], SED[0])
+        return numerator / denominator
+
+    def get_ab_magnitude(SED, filter_throughput):
+        mean_flux = get_weighted_mean_flux(SED, filter_throughput)
+        effective_wavelength = trapezoid(
+            filter_throughput[0] * filter_throughput[1],
+            filter_throughput[0],
+        ) / trapezoid(filter_throughput[1], filter_throughput[0])
+        f_nu = mean_flux * effective_wavelength ** 2 / c.to(u.AA / u.s).value
+        return -2.5 * np.log10(f_nu) - 48.6
+
+    VIS_filter_passband = photometry.Passband(file='VIS.Euclid.pb')
+    VIS_filter = np.array([VIS_filter_passband.lam(unit=u.AA).value, VIS_filter_passband.y])
+
+    elliptical_SED = np.loadtxt('./inputs/SEDs/Ell13_template_norm.csv', unpack=True)
+
+    rest_vis_ab_mag = get_ab_magnitude(elliptical_SED, VIS_filter)
+
+    z_arr = np.atleast_1d(np.asarray(z, dtype=float))
+    k_vals = np.array([
+        get_ab_magnitude(redshift_sed(elliptical_SED, zi), VIS_filter) - rest_vis_ab_mag
+        for zi in z_arr
+    ])
+    return k_vals[0] if np.ndim(z) == 0 else k_vals
 
 def physical_to_angular_size(effective_radius_kpc, redshift, cosmo):
     """
@@ -329,7 +417,8 @@ def physical_to_angular_size(effective_radius_kpc, redshift, cosmo):
     np.ndarray: Effective radius in arcseconds.
     """
     from astropy import units as u
-    from astropy.cosmology import Planck18 as cosmo
+    from astropy.cosmology import FlatLambdaCDM
+    cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 
     angular_diameter_distance = cosmo.angular_diameter_distance(redshift)  # in Mpc
     angular_size_rad = (effective_radius_kpc * u.kpc) / (angular_diameter_distance.to(u.kpc))  # in radians
