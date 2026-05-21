@@ -221,6 +221,7 @@ __marimo__/
 *.gz
 *.csv
 *.png
+*.zip
 z_dist/
 SEDs/
 test*/
