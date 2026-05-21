@@ -1,0 +1,18 @@
+# Requirements for SED_inferred_color_images
+# Install with: pip install -r requirements.txt
+
+numpy
+pandas
+astropy
+scipy
+matplotlib
+tqdm
+reproject
+lenstronomy
+pyphot
+skypy
+
+# Notes:
+# - The repository imports a module named `photometry` that was not found in the tree;
+#   if you see "No module named 'photometry'" at runtime, either install it via pip
+#   (if it is a public package) or place the local `photometry.py` module on PYTHONPATH.

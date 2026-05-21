@@ -74,25 +74,26 @@ class SED_color_calculator:
             self.filter_throughputs = [get_pyphot_filter(filter) for filter in filter_list]
 
         elif filter_names == 'Roman':
-            import photometry
-            pbs = [{'file': 'VIS.Euclid.pb', 'outCol': 'TU_Fnu_VIS', 'band': None, 'name': 'VIS'}]
-            for pb in pbs:
-                pb['band'] = photometry.Passband(file=pb['file'])
-
-            temp = [np.array([pb['band'].lam(unit=u.Angstrom).value, pb['band'].y]) for pb in pbs]
-
-            Euclid_VIS_mask = 3450. < temp[0][0]
-
+            # Use pyphot SVO filters for VIS and CSV files for Roman NIR filters.
             if verbose:
-                print("Loading Roman filter throughputs...")
+                print("Loading Roman filter throughputs (VIS via pyphot, NIR from ./Roman_filters/)...")
 
-            # get file list of Roman filter throughputs in ./Roman_filters/
-            filter_files = [f for f in os.listdir('./Roman_filters/') if f.endswith('.csv')]
-            self.filter_throughputs = [np.array([temp[0][0][Euclid_VIS_mask], temp[0][1][Euclid_VIS_mask]])]
+            from pyphot.svo import get_pyphot_filter
+
+            # VIS from pyphot
+            vis_pb = get_pyphot_filter('Euclid/VIS.vis')
+            vis_arr = np.array([vis_pb.lam(unit=u.AA).value, vis_pb.y])
+
+            # Roman NIR filters from local CSVs (expected in microns -> convert to Angstrom)
+            filter_files = sorted([f for f in os.listdir('./Roman_filters/') if f.endswith('.csv')])
+            roman_filters = []
             for filter_file in filter_files:
                 data = np.loadtxt(os.path.join('./Roman_filters/', filter_file), delimiter=',', skiprows=1, unpack=True)
                 data[0] *= 1e4  # convert from microns to Angstrom
-                self.filter_throughputs.append(data)
+                roman_filters.append(data)
+
+            # Combine VIS + Roman NIR filters (VIS first)
+            self.filter_throughputs = [vis_arr] + roman_filters
 
         else:
             raise NotImplementedError("Only 'Euclid' and 'Roman' filter throughputs are currently implemented.")
