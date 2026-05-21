@@ -1036,8 +1036,7 @@ if __name__ == "__main__":
                         help='Path to the input directory containing input files.')
     parser.add_argument('-o', '--output_path', type=str, required=True,
                         help='Path to the output directory where results will be saved.')
-    parser.add_argument('--edge_galaxy', type=str, default=None,
-                        help='CSV file containing edge galaxy parameters (optional).')
+    # The legacy `--edge_galaxy` option has been removed; edge galaxies are no longer required.
     parser.add_argument('--deflector_params', type=str, default='deflector.csv', help='deflector parameter CSV files (optional).')
     parser.add_argument('--source_params', type=str, default='source.csv', help='source parameter CSV files (optional).')
     parser.add_argument('--image_mode', type=str, choices=['Euclid', 'Roman'], default='Euclid', help='Whether to generate images in Euclid or Roman mode. This affects the noise generation and image properties.')
@@ -1087,13 +1086,8 @@ if __name__ == "__main__":
     deflector_augments = pd.read_csv(deflector_file)
     source_augments = pd.read_csv(source_file)
 
+    # Additional/edge-galaxy CSVs are deprecated; ensure no dependency on them.
     edge_galaxy_df = None
-    if args.edge_galaxy:
-        try:
-            edge_galaxy_df = load_edge_galaxies_by_image(args.input_path + '/' + args.edge_galaxy)
-        except Exception as e:
-            logging.warning(f"Empty additional galaxy CSV or failed to load: {e}")
-            edge_galaxy_df = None
 
     if args.comparison:
         zeropoints = np.array([0, 0, 0, 0])  # no scaling for comparison mode

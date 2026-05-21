@@ -38,7 +38,7 @@ For each class, it runs commands equivalent to:
 
 ```bash
 python new_paramter_sampling.py 5000 -o ./inputs/full_run_rescaling_1
-python create_images_real.py --base_class 1 --input_path ./inputs -o ./output_full_run_rescaling/ --edge_galaxy full_run_rescaling_1_additional.csv --deflector_params full_run_rescaling_1_deflector.csv --source_params full_run_rescaling_1_source.csv --image_mode Euclid
+python create_images_real.py --base_class 1 --input_path ./inputs -o ./output_full_run_rescaling/ --deflector_params full_run_rescaling_1_deflector.csv --source_params full_run_rescaling_1_source.csv --image_mode Euclid
 ```
 
 ## `create_images_real.py` Command-Line Options
@@ -51,7 +51,7 @@ The main required options are:
 
 Optional inputs:
 
-- `--edge_galaxy FILE`: Additional CSV file for edge-galaxy parameters.
+- `--edge_galaxy FILE`: (Deprecated/optional) Additional CSV file for edge-galaxy parameters. The default batch wrapper no longer uses or generates these files; provide one only for legacy workflows that require edge galaxies.
 - `--deflector_params FILE`: Deflector parameter CSV.
 - `--source_params FILE`: Source parameter CSV.
 - `--image_mode {Euclid,Roman}`: Selects the instrument setup.
